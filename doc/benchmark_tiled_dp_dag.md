@@ -11,6 +11,13 @@ macchina di riferimento (8 thread OpenMP).
   dove l'approccio a DAG abbia (o non abbia) senso.
 - **Invariante di correttezza**: in ogni scenario i tre solver producono
   **valori e pesi bit-identici** (stessi Profit e Weight totali).
+- **Regime misurato**: questo report copre lo scenario "molti item,
+  capacity piccola/media" su un nodo a 8 thread. La campagna `perf`
+  documentata in [`cache_summary.md`](cache_summary.md) — n=50, capacity
+  fino a 1e6–1e7, fino a 32 thread, tempi same-run ripetuti 3 volte con
+  contatori hardware — copre il regime complementare "pochi item, capacity
+  grande": le conclusioni dei due documenti non si contraddicono, perché i
+  regimi sono opposti (§5.4).
 
 ---
 
@@ -244,7 +251,7 @@ equivale a **centinaia–migliaia di barriere** `#pragma omp parallel for`, ognu
 delle quali serializza il pipe. Il work-queue topologico elimina le barriere e
 lascia lavorare i worker in modo asimmetrico, otto alla volta.
 
-### 5.2. ... ma il DAG non batte mai il DP classico su un singolo nodo
+### 5.2. ... ma in questo regime il DAG non batte mai il DP classico
 
 Nonostante questi guadagni interni, **nessuna configurazione di `knapsackdpdag`
 (sia topo sia levelized, in nessuna dimensione di tile) supera il classico
@@ -263,6 +270,10 @@ vero punto cieco è che anche il **solo `Dag Solve`** (topo + compute, astraendo
 dalla costruzione del grafo) costa già 768–905 ms, cioè **più dell'intero tempo
 del `knapsackdp`** (0.63–1.09 s). Il collo di bottiglia, quindi, non è nelle
 barriere né nel parallelismo.
+
+(Questa conclusione vale per il regime "molti item, righe corte" di questi
+scenari; nel regime complementare a tabelle grandi la campagna perf misura
+l'esito opposto — §5.4.)
 
 ### 5.3. Causa radice: il costo per-cell del tiling
 
@@ -283,6 +294,56 @@ Si aggiunge che la sola **`GraphBuild` costa già 295–688 ms** in queste
 configurazioni: un onere fisso maggiore o uguale all'intero tempo del `knapsackdp`
 di riferimento.
 
+### 5.4. Relazione con la campagna perf: i due regimi non si contraddicono
+
+La campagna di misure hardware di
+[`cache_summary.md`](cache_summary.md) (`perf stat` su `kpbench`, nodo ARM
+epito01, 3 repliche con tempi same-run, fino a 32 thread) copre il regime
+opposto a quello di questo report:
+
+| | Questo report | Campagna perf (`cache_summary.md`) |
+|---|---|---|
+| numItems | 20 000–300 000 | 50 |
+| capacity | 128–20 000 | 10⁴–10⁷ |
+| thread | 8 | 1–32 |
+| esito DAG vs DP classico | sempre più lento (+30…+159%) | **~4× più veloce** a p=1 (c=1e6); con n grande il vantaggio cresce a 6.8–9.4× e il DAG vince a tutte le p (§4 di `cache_summary.md`) |
+
+(I tempi assoluti dei due dataset non sono confrontabili: macchine e
+banchi di prova diversi; il confronto è qualitativo.)
+
+La sintesi: **l'esito dipende dal rapporto tra dimensione della tabella e
+costo del tiling**.
+
+1. **Capacity piccola (righe corte)** — regime di questo report. La
+   scansione row-major del DP classico è sequenziale e prefetch-friendly;
+   il DAG invece paga decine di migliaia di tile con `GraphBuild` da
+   centinaia di ms, copia della riga boundary e indirezione cross-tile per
+   ogni lettura che esce dal tile. Nessun guadagno di località da
+   recuperare: il tiling è puro overhead.
+2. **Capacity grande e n piccolo** — regime della campagna perf. La
+   tabella (40–400 MB) eccede l'ultimo livello di cache: il DP classico
+   fa ~90–100 LLC miss per 1000 istruzioni (hit L3 ~0–3%, IPC ~0.6)
+   perché la riga precedente viene espulsa prima di essere rileta. Il
+   tiling riporta il working set di ogni tile in cache: **18–28× meno
+   miss LLC**, IPC 2.2–2.3, ~11 cicli/cella contro ~38–40, e **~4× sul
+   tempo a muro seriale** a c=1e6. Con n=50 inoltre `GraphBuild` è
+   trascurabile (a ib25/cb1000 la griglia ha ~2000 tile, non centinaia di
+   migliaia).
+3. **Il parallelismo, in entrambi i regimi, segue lo stesso criterio**: a
+   c=1e6 con n=50 il DAG-best scala fino a ~2.5× a muro (p=16) prima che
+   spinning e barriere (`insn_ratio` fino a ~4.6×) riassorbano il guadagno;
+   l'esperimento di crossover di `cache_summary.md` (§4) conferma che il
+   limite è il rapporto calcolo/sincronizzazione: con 20–100× più lavoro
+   per tile lo scaling sale a 7.1×/9.1× a p=32 e lo spinning crolla a
+   ~1.25×. A c=1e4 (run da 1–2 ms) l'overhead domina e a 32 thread il
+   tempo peggiora — coerente con l'osservazione di questo report che il
+   costo di sincronizzazione può annullare il parallelismo esposto.
+
+In altri termini: il verdetto negativo di questo report vale **per tabelle
+con righe corte**, dove il DP classico è già cache-ottimo; la vittoria del
+tiled DAG nella campagna perf vale **per tabelle che eccedono la cache**,
+dove il DP classico è memory-bound by construction.
+
 ---
 
 ## 6. Conclusioni (verdetto onesto)
@@ -291,27 +352,39 @@ di riferimento.
    prestazione** rispetto al levelized: elimina le barriere per-livello,
    avvia i wavefront senza sincronizzazioni globali e produce valori
    bit-identici. È da considerare la via d'accesso di default.
-2. **Ma su un singolo nodo shared-memory, la DP tiled su DAG non riesce a
-   battere la classica DP row-parallel** `knapsackdp`, per qualsiasi dimensione
-   di tile. Il costo per-cell del tiling (boundary copy + indirezione cross-tile,
-   più la costruzione pesante del grafo) supera ogni guadagno di parallelismo,
-   che pure esiste (`maxFrontier` ≥ 8).
-3. **Il vero valore del DAG è nel contesto MPI/distribuito**, dove la
-   struttura a dipendenze rimuove la *cross-process data sharing* che né
-   `omp for` né il DP classico possono esprimere. Su un nodo, invece, la
-   baseline `knapsackdp` resta il punto di riferimento per il tempo.
+2. **Ma nel regime di questo report (molti item, righe corte) su un nodo
+   shared-memory, la DP tiled su DAG non riesce a battere la classica DP
+   row-parallel** `knapsackdp`, per qualsiasi dimensione di tile. Il costo
+   per-cell del tiling (boundary copy + indirezione cross-tile, più la
+   costruzione pesante del grafo) supera ogni guadagno di parallelismo,
+   che pure esiste (`maxFrontier` ≥ 8). Nel regime complementare — n
+   piccolo, capacity grande, tabella più grande della cache — la campagna
+   perf mostra l'esito opposto: il tiled DAG batte il DP classico di ~4×
+   in seriale (fino a 9.4× con n=5000) e, con abbastanza lavoro per tile,
+   scala fino a ~9× a muro (§5.4 e §4 di `cache_summary.md`).
+3. **Il vero valore del DAG è duplice**: nel regime "tabella >> cache" la
+   località del tiling è un guadagno reale anche su un singolo nodo
+   (campagna perf, §5.4); nel contesto MPI/distribuito la struttura a
+   dipendenze rimuove inoltre la *cross-process data sharing* che né
+   `omp for` né il DP classico possono esprimere. Nel regime "righe
+   corte", invece, la baseline `knapsackdp` resta il punto di riferimento
+   per il tempo.
 
-**In sintesi**: per questo specifico problema e per questa macchina, la
-fattorizzazione `knapsackdpdag` = costruzione del grafo + schedulatore topologico
-non è competitiva in locale — ma il codice di schedulazione topologico e la
-'clean-room' di `compute_tile`/edge-dedup sono pronti e preziosi come base
-per l'esecuzione distribuita.
+**In sintesi**: per questo specifico problema, nel regime "molti item e
+righe corte" la fattorizzazione `knapsackdpdag` = costruzione del grafo +
+schedulatore topologico non è competitiva in locale — ma il codice di
+schedulazione topologico e la 'clean-room' di `compute_tile`/edge-dedup
+sono pronti e preziosi come base per l'esecuzione distribuita e per il
+regime a tabelle grandi, dove la stessa macchina misura il DAG ~4× più
+veloce del DP classico in seriale.
 
 ---
 
 ## 7. Riferimenti
 
 - Sibling algoritmico (struttura DAG, tiling, wavefront): [`doc/tiled_dp_dag.md`](tiled_dp_dag.md)
+- Campagna `perf` con contatori hardware e tempi same-run (regime n=50,
+  capacity grandi): [`doc/cache_summary.md`](cache_summary.md)
 - Sorgenti:
   - `src/Knapsack/knapsackdp.cpp` — DP classico row-parallel (baseline)
   - `src/Knapsack/knapsackdpdag.cpp` — `build_graph`, `compute_levels`,

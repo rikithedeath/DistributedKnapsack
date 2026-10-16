@@ -157,6 +157,7 @@
 
 #let GenerateDAG = algorithm-figure(
   "KnapsackDPDAG.GenerateDAG",
+  inset: (x: 0.2em, y: 0.42em),
   {
     import algorithmic: *
     let AddVertex = Call.with("AddVertex")
@@ -189,6 +190,7 @@
 
 #let AssignLevels = algorithm-figure(
   "KnapsackDPDAG.AssignLevels",
+  inset: (x: 0.2em, y: 0.42em),
   {
     import algorithmic: *
     Procedure("KnapsackDPDAG.AssignLevels", "g", {
@@ -211,6 +213,7 @@
 
 #let ComputeTile = algorithm-figure(
   "KnapsackDPDAG.ComputeTile",
+  inset: (x: 0.2em, y: 0.42em),
   {
     import algorithmic: *
     Procedure("KnapsackDPDAG.ComputeTile", ("dp", "tile", "weights", "values"), {

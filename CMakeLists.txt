@@ -25,6 +25,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Collect all source files from src directory
 file(GLOB_RECURSE KP_SRC "src/*.cpp")
+# Keep the full source list for the benchmark executable
+set(KP_BENCH_SRC ${KP_SRC})
+# main.cpp must not end up in the shared library (it defines main())
+list(REMOVE_ITEM KP_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
 # Collect module-like sources and expose them as CXX modules
 file(GLOB_RECURSE KP_MODULES "src/*.cxx")
 # Create executable
@@ -57,6 +61,28 @@ if(KP_MPI)
   add_subdirectory(mpi)
   target_link_libraries(distributed_knapsack PUBLIC distributed_knapsack_mpi)
   target_include_directories(distributed_knapsack PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/mpi ${CMAKE_CURRENT_SOURCE_DIR}/mpi/Knapsackmpi)
+endif()
+
+# Standalone benchmark executable (no pybind/Python symbols, no shared lib)
+list(REMOVE_ITEM KP_BENCH_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/lib.cpp")
+add_executable(kpbench ${KP_BENCH_SRC})
+target_sources(kpbench PRIVATE
+    FILE_SET CXX_MODULES
+    TYPE CXX_MODULES
+    FILES ${KP_MODULES}
+)
+target_include_directories(kpbench PRIVATE src external include ${OpenMP_CXX_INCLUDE_DIRS} ${OpenMP_C_INCLUDE_DIRS} ${Boost_INCLUDE_DIRS} ${fmt_INCLUDE_DIRS} ${EIGEN3_INCLUDE_DIR} ${spdlog_INCLUDE_DIRS})
+target_compile_options(kpbench PRIVATE ${OpenMP_CXX_FLAGS} ${OpenMP_C_FLAGS} ${Boost_COMPILE_OPTIONS})
+target_link_libraries(kpbench PRIVATE OpenMP::OpenMP_CXX OpenMP::OpenMP_C fmt::fmt spdlog::spdlog Eigen3::Eigen)
+
+if(ENABLE_TIMERS)
+  target_compile_definitions(kpbench PRIVATE ENABLE_TIMERS=1)
+endif()
+
+if(KP_GPU)
+  target_compile_definitions(kpbench PRIVATE KP_GPU=1)
+  target_link_libraries(kpbench PRIVATE distributed_knapsack_gpu)
+  target_include_directories(kpbench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/gpu/include)
 endif()
 
 add_subdirectory(test)
