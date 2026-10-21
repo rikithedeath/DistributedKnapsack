@@ -230,7 +230,6 @@ def plot_speedup_vs_processors(metrics: pd.DataFrame, out: Path) -> None:
         ax.grid(True, which="both", alpha=0.3)
         ax.legend(fontsize=8)
     axes[0].set_ylabel("speedup  T(1)/T(p)")
-    fig.suptitle("KnapsackDP speedup vs thread count")
     fig.tight_layout()
     fig.savefig(out, dpi=150)
     plt.close(fig)

@@ -74,7 +74,6 @@ L'algoritmo sfrutta prima un'algoritmo di generazione parallela delle liste A e 
     })
   },
 
-  supplement: none,
 ) <alg:parallel_gen>
 
 l'algoritmo di merging parallelo si articola nel modo seguente: prende in input due vettori ordinati $U = (u_1, u_2, dots, u_m)$ e $V = (v_1, v_2, dots, v_m)$ e $k$ processori $P_1, P_2, dots, P_k$, con $1 <= k <= 2m$ potenza di 2, e produce un vettore ordinato di lunghezza $2m$ ottenuto dall'unione di $U$ e $V$.
@@ -104,7 +103,6 @@ A questo punto si può passare a dividere equamente tra i processori disponibili
     })
   },
 
-  supplement: none,
 ) <alg:parallel_max>
 
 Ora lo spazio delle soluzioni è davvero molto grande, per questo motivo si ricorre a un algoritmo di potatura dell'insieme delle soluzioni
@@ -145,7 +143,6 @@ Ora lo spazio delle soluzioni è davvero molto grande, per questo motivo si rico
     Line[$"remaining" <- union_(i = 1)^k "local_results"_i$]
   },
 
-  supplement: none,
 ) <alg:parallel_pruning>
 
 L'algoritmo di pruning sfrutta il fatto che i blocchi sono ordinati per peso. Per ogni coppia di blocchi $(A_i, B_j)$, vengono calcolati due valori chiave:
@@ -188,7 +185,6 @@ Dopo il pruning, al più $2k - 1$ coppie di blocchi vengono distribuite equament
     })
   },
 
-  supplement: none,
 ) <alg:parallel_suffix_max>
 
 Questo pre-calcolo consente, durante la ricerca, di conoscere in $O(1)$ il miglior profitto ottenibile da un dato punto in poi nella lista $B$, accelerando notevolmente la scansione.
@@ -230,7 +226,6 @@ Ciascun processore esegue una ricerca #emph[*two-pointer*] sulle proprie coppie 
     Line[Converti le componenti di $X$ in binario e concatena per ottenere la soluzione finale]
   },
 
-  supplement: none,
 ) <alg:parallel_search>
 
 La logica è la seguente: poiché $A_i$ è ordinato per peso crescente e $B_("it")$ per peso decrescente, quando la somma dei pesi supera la capacità $c$, si incrementa $y$ per passare a un elemento più leggero in $B$. Quando invece la somma è ammissibile, il profitto candidato si calcola come $a_(i:x) dot "p" + "Max"_(i:y)[t]$, dove $"Max"_(i:y)[t]$ rappresenta il miglior profitto ottenibile da $y$ in poi nel blocco $B_("it")$. Questo evita di dover iterare su tutte le coppie di elementi, riducendo la complessità a $O(e) = O(N/k)$.
@@ -280,7 +275,6 @@ che prenderà in input le due liste ordinate.
     LineComment(Assign[$X$][Call["strcat"][$"binary"_1$, $"binary"_2$]], [Concatena i due binari])
   },
 
-  supplement: none,
 ) <alg:cap>
 
 
@@ -309,7 +303,6 @@ L'algoritmo sfrutta prima un'algoritmo di generazione parallela delle liste A e 
     })
   },
 
-  supplement: none,
 ) <alg:parallel_gen>
 
 l'algoritmo di merging parallelo si articola nel modo seguente: prende in input due vettori ordinati $U = (u_1, u_2, dots, u_m)$ e $V = (v_1, v_2, dots, v_m)$ e $k$ processori $P_1, P_2, dots, P_k$, con $1 <= k <= 2m$ potenza di 2, e produce un vettore ordinato di lunghezza $2m$ ottenuto dall'unione di $U$ e $V$.
@@ -339,7 +332,6 @@ A questo punto si può passare a dividere equamente tra i processori disponibili
     })
   },
 
-  supplement: none,
 ) <alg:parallel_max>
 
 Ora lo spazio delle soluzioni è davvero molto grande, per questo motivo si ricorre a un algoritmo di potatura dell'insieme delle soluzioni
@@ -380,7 +372,6 @@ Ora lo spazio delle soluzioni è davvero molto grande, per questo motivo si rico
     Line[$"remaining" <- union_(i = 1)^k "local_results"_i$]
   },
 
-  supplement: none,
 ) <alg:parallel_pruning>
 
 L'algoritmo di pruning sfrutta il fatto che i blocchi sono ordinati per peso. Per ogni coppia di blocchi $(A_i, B_j)$, vengono calcolati due valori chiave:
@@ -423,7 +414,6 @@ Dopo il pruning, al più $2k - 1$ coppie di blocchi vengono distribuite equament
     })
   },
 
-  supplement: none,
 ) <alg:parallel_suffix_max>
 
 Questo pre-calcolo consente, durante la ricerca, di conoscere in $O(1)$ il miglior profitto ottenibile da un dato punto in poi nella lista $B$, accelerando notevolmente la scansione.
@@ -465,7 +455,6 @@ Ciascun processore esegue una ricerca #emph[*two-pointer*] sulle proprie coppie 
     Line[Converti le componenti di $X$ in binario e concatena per ottenere la soluzione finale]
   },
 
-  supplement: none,
 ) <alg:parallel_search>
 
 La logica è la seguente: poiché $A_i$ è ordinato per peso crescente e $B_("it")$ per peso decrescente, quando la somma dei pesi supera la capacità $c$, si incrementa $y$ per passare a un elemento più leggero in $B$. Quando invece la somma è ammissibile, il profitto candidato si calcola come $a_(i:x) dot "p" + "Max"_(i:y)[t]$, dove $"Max"_(i:y)[t]$ rappresenta il miglior profitto ottenibile da $y$ in poi nel blocco $B_("it")$. Questo evita di dover iterare su tutte le coppie di elementi, riducendo la complessità a $O(e) = O(N/k)$.

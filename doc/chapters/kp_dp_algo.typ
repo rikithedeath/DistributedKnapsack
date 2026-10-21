@@ -104,7 +104,6 @@
       },
     )
   },
-  supplement: none,
 );
 
 #let KpDp = algorithm-figure("Knapsack DP: Naive frontier parallel", {

@@ -33,7 +33,6 @@ I sottoinsiemi sono generati partendo dalla lista generale, dividendola in due e
   ],
   caption: "funzione di Parallel Merging",
   kind: "listing",
-  supplement: none,
 )
 
 #figure(
@@ -58,7 +57,6 @@ I sottoinsiemi sono generati partendo dalla lista generale, dividendola in due e
   ],
   caption: "Funzione di generazione e merging",
   kind: "listing",
-  supplement: none,
 )
 
 Per aumentare il più possibile la località dei dati durante questa fase, si copia il dato e gli si aggiunge l'item direttamente nelle istruzioni successive. Questa funzione nello specifico restituisce il metodo di generazione della lista A in ordine crescente, per la lista B è sufficiente usare std::reverse, una possibile ottimizzazione sarebbe quella di usare std::ranges::reverse in modo che il reversing dei dati sia lazy, cioè effettuato solo quando si pesca dal range. Tuttavia visto che le funzioni successive richiederanno l'uso di input range, che richiede che il range in entrata sia contiguo, questa operazione non sarà possibile poichè il reverse range non è contiguo per lo standard c++. A questo punto si può procedere e suddividere la lista di blocchi in sottoinsiemi di blocchi equamente distribuiti tra i processori, avendo cura di calcolare il massimo profitto durante questa operazione.
@@ -93,7 +91,6 @@ Per aumentare il più possibile la località dei dati durante questa fase, si co
   ],
   caption: "Funzione di calcolo del massimo e distribuzione dei blocchi",
   kind: "listing",
-  supplement: none,
 )
 
 A questo punto ci si ritrova in output una lista di sottoinsiemi di blocchi, ogni elemento corrisponde al sottoinsieme su cui ci si aspetta che il processo p operi.
@@ -139,7 +136,6 @@ Una volta compiuta l'operazione di distribuzione si può passare a eseguire il p
   ],
   caption: "Funzione di pruning di un sottoinsieme di blocchi",
   kind: "listing",
-  supplement: none,
 )
 
 La suddetta funzione deve essere chiamata in modo parallelo in questo modo. La suddivisione è necessaria poichè questa implementazione della funzione di pruning è stata riutilizzata anche nella versione MPI.
@@ -163,7 +159,6 @@ La suddetta funzione deve essere chiamata in modo parallelo in questo modo. La s
   ],
   caption: "Chiamata parallela della funzione di pruning",
   kind: "listing",
-  supplement: none,
 )
 
 A questo punto si può illustrare la funzione di ricerca parallela dei massimi, che viene chiamata sui blocchi rimanenti in questo modo, anche in questo caso la funzione è stata disaccoppiata poichè la parte di calcolo è stata riutilizzata nella versione a memoria distribuita.
@@ -186,7 +181,6 @@ A questo punto si può illustrare la funzione di ricerca parallela dei massimi, 
   ],
   caption: "Ricerca parallela dei massimi sui blocchi rimanenti",
   kind: "listing",
-  supplement: none,
 )
 
 La funzione prende in input le coppie rimanenti in ciascuna lista, che è un vettore di coppie di blocchi, e li esamina in questo modo: prima calcola il suffisso massimo di profitto tra i blocchi della lista B, dopodichè esegue una comparazione con i pesi della lista A.
@@ -224,7 +218,6 @@ La funzione prende in input le coppie rimanenti in ciascuna lista, che è un vet
   ],
   caption: "Funzione di ricerca del massimo tra i blocchi rimanenti",
   kind: "listing",
-  supplement: none,
 )
 
 La funzione di calcolo dei suffissi è implementata in questo modo
@@ -252,7 +245,6 @@ La funzione di calcolo dei suffissi è implementata in questo modo
   ],
   caption: "Funzione di calcolo dei suffix max",
   kind: "listing",
-  supplement: none,
 )
 
 === L'algoritmo completo
@@ -310,7 +302,6 @@ La funzione completa si articola quindi in questo modo
   ],
   caption: "Funzione knapsackcopa completa",
   kind: "listing",
-  supplement: none,
 )
 
 Questa funzione mette semplicemente insieme tutti i passi dell'algoritmo: 1) si generano i 2 subsets dividendo in 2 la lista di pesi e profitti 2) si distribuiscono i blocchi tra i processori e si cercano i primi massimi profitti tra i blocchi 3) si esegue la potatura dei blocchi 4) si effettua il secondo algoritmo di ricerca dei massimi e si estrae la soluzione finale concatenando gli indici degli oggetti rappresentati come stringa binaria.
@@ -338,7 +329,6 @@ Questo algoritmo è stato concepito principalmente per un utilizzo in shared mem
   ],
   caption: "Funzione di merge parallelo della lista",
   kind: "listing",
-  supplement: none,
 )
 
 La funzione di merging funziona calcolando parallelamente tutti i corank degli elementi, infine applica il merge su pezzi di lista distinti, esegue il gather delle varie liste usando come displacement proprio gli indici calcolati dal corank e infine distribuisce il risultato a tutti i task.
@@ -379,7 +369,6 @@ La funzione di merging funziona calcolando parallelamente tutti i corank degli e
   ],
   caption: "Funzione di generazione dei subsets",
   kind: "listing",
-  supplement: none,
 )
 
 La funzione di generazione funziona in modo analogo alla sua controparte shared memory, si crea una lista shifted a partire da quella presente al passo precedente, si esegue lo scattering e ogni task aggiunge internamente al suo pezzo di lista l'oggetto, infine si esegue riunisce la lista e si procede alla funzione di merging parallelo.
@@ -414,7 +403,6 @@ Anche in questo caso la funzione di distribuzione si comporta in modo analogo al
   ],
   caption: "Funzione di distribuzione dei blocchi",
   kind: "listing",
-  supplement: none,
 )
 
 Dopodichè i processi eseguono il pruning esattamente come nella versione shared memory.
@@ -485,7 +473,6 @@ L'aspetto della funzione di calcolo completa è analogo alla versione shared mem
   ],
   caption: "Funzione completa COPA MPI",
   kind: "listing",
-  supplement: none,
 )
 
 === Considerazioni finali sull'implementazione

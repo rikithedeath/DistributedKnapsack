@@ -38,7 +38,6 @@ L'implementazione MPI dell'algoritmo è molto simile, l'approccio seguito è sta
   ],
   caption: "Worker task",
   kind: "listing",
-  supplement: none,
 )
 
 i task sono dei range di indici che il worker deve computare, una volta finito il worker invia al master il blocco appena computato dopodichè il worker attende tutti i nodi alla barriera e si comincia il calcolo per il prossimo oggetto.
@@ -78,7 +77,6 @@ i task sono dei range di indici che il worker deve computare, una volta finito i
   ],
   caption: "Master Task",
   kind: "listing",
-  supplement: none,
 )
 
 terminati i cicli il master può leggere dalla DP il risultato. Si evince subito che l'implementazione MPI è piuttosto semplice e segue uno schema molto simile alla versione Shared Memory, tuttavia presenta lo svantaggio di dover comunicare la linea calcolata a tutti i worker. Svantaggio che si avrebbe comunque anche nel caso della versione più ottimizzata, in cui non esiste la DP perchè non si esegue il backtracking per ricostruire gli oggetti scelti, ma si calcola solo il profitto massimo ottenibile. In questo caso infatti, per calcolare la linea successiva della DP è necessario conoscere la linea precedente, quindi anche in questo caso si dovrebbe comunicare a tutti i worker la linea precedentemente calcolata.

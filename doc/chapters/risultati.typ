@@ -12,7 +12,6 @@ i due algoritmi in shared memory hanno efficacia profondamente diversa.
 #figure(
   image("../images/t_c_p_shared.png", width: 100%),
   caption: [Confronto dei tempi di esecuzione per gli algoritmi shared memory al variare del numero di thread.],
-  supplement: none,
 ) <fig:tcpshared>
 
 Dal grafico soprastante si osserva innanzitutto che, superata una certa capacità, i tempi di esecuzione dell'algoritmo DP crescono rapidamente, mentre quelli del COPA rimangono sostanzialmente costanti: questo è dovuto al fatto che la complessità del DP dipende dal prodotto $N times C$ (con $C$ la capacità dello zaino), mentre il COPA dipende solo dal numero di elementi $N$, generando $2^(N\/2)$ sottoinsiemi indipendentemente dalla capacità.
@@ -20,7 +19,6 @@ Dal grafico soprastante si osserva innanzitutto che, superata una certa capacit�
 #figure(
   image("../images/KnapsackDP_Speedup.png", width: 100%),
   caption: [Speedup dell'algoritmo KPDP in shared memory],
-  supplement: none,
 ) <fig:kpdpshared>
 
 Lo speedup nel caso della versione in dynamic programming come ci si potrebbe aspettare cresce un pò con l'aumentare massiccio dei threads, questo diviene particolarmente vero quando la capacità è molto alta, sopratutto perchè a quel punto il ciclo interno sarà quello con più lavoro da eseguire. Questo comportamento smette di verificarsi quando non ci sono abbastanza elementi da poter giustificare l'instanziazione di tutti quei thread e quindi si perde di efficacia, ciò è verificabile meglio nel plot sottostante
@@ -28,7 +26,6 @@ Lo speedup nel caso della versione in dynamic programming come ci si potrebbe as
 #figure(
   image("../images/KnapsackDP_speedupplot.png", width: 100%),
   caption: [Speedup plot dell'algoritmo KP in DP],
-  supplement: none,
 ) <fig:kpdpsharedplot>
 
 In questo grafico sono riportati diversi speedup a seconda della capacità, si vede subito comunque che l'algoritmo scala bene solo con i primi threads e solo quando la capacità supera una certa soglia. Diventa ancora più evidente se si osserva il grafico dell'efficienza
@@ -36,7 +33,6 @@ In questo grafico sono riportati diversi speedup a seconda della capacità, si v
 #figure(
   image("../images/KnapsackDP_Efficiency.png", width: 100%),
   caption: [Efficienza dell'algoritmo KP in DP],
-  supplement: none,
 ) <fig:kpdpsharedefficiency>
 
 === Knapsack COPA
@@ -46,13 +42,11 @@ Nell'algoritmo COPA si può osservare invece che lo speedup cresce molto rapidam
 #figure(
   image("../images/KnapsackCOPA_Speedup.png", width: 100%),
   caption: [Speedup dell'algoritmo KP COPA in shared memory],
-  supplement: none,
 ) <fig:kpcopaspeedup>
 
 #figure(
   image("../images/KnapsackCOPA_speedupplot.png", width: 100%),
   caption: [Speedup dell'algoritmo KP COPA in shared memory],
-  supplement: none,
 ) <fig:kpcopaplot>
 
 Non bisogna sorprendersi della discesa repentina dello speedup all'aumentare dei processori, l'algoritmo presenta infatti una peculiarità: ovvero che potrebbe scalare meglio con un numero di elementi più alto, sfortunatamente il numero di soluzioni generate durante lo step di creazione dei subsets lo rende proibitivo a livello di memoria richiesta, visto che lo spazio occupato è $2^n$ elementi. Le linee a capacità bassa che segnano invece uno speedup di 1.4 sono perlopiù falsi positivi dovuti alla chiusura praticamente immediata del job vista l'assenza di coppie valutabili durante la fase di pruning. Ovviamente questo comportamento si riflette sull'efficienza che decresce repentinamente e sui costi che salgono rapidamente sopratutto oltre i 20 processori.
@@ -60,13 +54,11 @@ Non bisogna sorprendersi della discesa repentina dello speedup all'aumentare dei
 #figure(
   image("../images/KnapsackCOPA_Cost.png", width: 100%),
   caption: [Costo dell'algoritmo KP COPA in shared memory],
-  supplement: none,
 ) <fig:kpcopacost>
 
 #figure(
   image("../images/KnapsackCOPA_Efficiency.png", width: 100%),
   caption: [Efficienza dell'algoritmo KP COPA in shared memory],
-  supplement: none,
 ) <fig:kpcopaefficiency>
 
 === Knapsack DP vs COPA
@@ -76,7 +68,6 @@ Mettendo a confronto i due algoritmi si può osservare che, utilizzando l'algori
 #figure(
   image("../images/knapsackdpvscopashared.png", width: 100%),
   caption: [Speedup dell'algoritmo KP COPA vs DP],
-  supplement: none,
 ) <fig:kpcopavsdp>
 
 Come si può osservare dal grafico, l'algoritmo in dynamic programming vince sostanzialmente in tutte quelle configurazioni in cui la capacità è più piccola di una certa soglia, sotto il $10^7$, mentre invece per configurazioni in cui la capacità è molto grande COPA è molto più veloce. Questo conferma quanto scritto nell'articolo in cui si presenta proprio questa soluzione al problema dello zaino, va detto comunque che la limitazione d'uso a cui si è sottoposti è importante, visto che non è possibile calcolare soluzioni per insiemi più grandi di 50 elementi.
@@ -88,7 +79,6 @@ Entrambi gli algoritmi, come si può osservare nel grafico, funzionano molto mal
 #figure(
   image("../images/knapsackdp_mpi_mpi.png", width: 100%),
   caption: [Speedup degli algoritmi in distributed memory],
-  supplement: none,
 ) <fig:kpcopadpmpi>
 
 Nel caso dell'algoritmo in dynamic programming, la motivazione è semplice da individuare: il broadcast della riga ad ogni iterazione comporta un costo alto in termini di tempi di comunicazione. Supponendo di usare un intero a 32 bit, quindi 4 byte, per rappresentare il vettore di pesi e il vettore dei profitti, se si suppone una lunghezza di $10^8$ elementi bisogna trasferire circa 381 Mb ogni volta solo per il broadcast e altrettanti per eseguire il gathering e lo scattering del prossimo vettore da calcolare, rendendo questo algoritmo altamente memory bound. La versione COPA invece non presenta questo problema durante il calcolo, purtroppo durante la fase di generazione dei subsets rende il processo memory bound almeno inizialmente, visto che per ogni elemento è necessario scambiarsi tutta la lista di subsets generati, supponendo di usare 3 interi a 32 bit per rappresentare profitto, peso e indice del blocco servono $2^(n\/2) * 4 * 3 * 2$ al passo finale per entrambe le liste, per cui in totale bisogna trasferire $sum_(i = 1)^n 2^(i\/2) * 4 * 3 * 2$, misura che diventa considerevolmente grande una volta che il numero di elementi diventa abbastanza grande, rendendo di fatto l'algoritmo nuovamente memory bound.

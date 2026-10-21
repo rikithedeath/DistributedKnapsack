@@ -707,16 +707,18 @@ def plot_big_crossover(
     best_big: pd.DataFrame,
     out: Path,
 ) -> None:
-    """Wall speedup vs threads, one panel per num_items (50 from the n=50 sweep).
+    """DAG speedup over the classic, T_plain/T_dag at the same p, one panel
+    per num_items (50 from the n=50 sweep), linear scale.
 
-    The crossover experiment in one figure: if the DAG's scaling limit is
-    the synchronization-to-work ratio, the DAG curve must lift toward (or
-    past) the plain-DP curve as num_items -- work per tile and between
-    synchronizations -- grows by 5x/20x/100x.
+    Every point is above 1: the DAG wins in wall time at every thread
+    count.  The advantage is largest serially (4-9x, the serial-time
+    ratio) and shrinks toward p=32 (1.3-5.8x) because the DAG's
+    synchronization limit flattens its curve while the classic keeps
+    scaling.
     """
     nis = [50, 1000, 5000]
-    fig, axes = plt.subplots(1, len(nis), figsize=(4.4 * len(nis), 4.4), sharey=True)
-    for ax, ni in zip(axes, nis):
+    fig, axes = plt.subplots(1, len(nis), figsize=(4.4 * len(nis), 4.4), sharey=True, squeeze=False)
+    for j, ni in enumerate(nis):
         if ni == 50:
             dag = best_small[
                 (best_small["family"] == 10) & (best_small["capacity"] == 1_000_000)
@@ -730,17 +732,21 @@ def plot_big_crossover(
                 (plain_big["num_items"] == ni) & (plain_big["max_weight"] == 10)
             ]
         procs = sorted(set(dag["processors"]) | set(plain["processors"]))
-        ax.plot(plain["processors"], plain["speedup"], "o-",
-                color="#1f77b4", label="KnapsackDP")
-        ax.plot(dag["processors"], dag["s_wall"], "s-",
-                color="#d62728", label="KnapsackDPDAG (best)")
+
+        ax = axes[0][j]
+        merged = dag[["processors", "time"]].rename(columns={"time": "t_dag"}).merge(
+            plain[["processors", "time"]].rename(columns={"time": "t_plain"}),
+            on="processors",
+        )
+        ax.plot(merged["processors"], merged["t_plain"] / merged["t_dag"], "o-",
+                color="#9467bd", label=r"$T_{plain}\/T_{dag}$")
+        ax.axhline(1.0, color="k", linestyle=":", linewidth=1)
         _style_axis_threads(ax, procs)
         ax.set_xlabel("processors (threads)")
         ax.set_title(f"num_items={ni}")
         ax.grid(True, which="both", alpha=0.3)
         ax.legend(fontsize=8)
-    axes[0].set_ylabel("wall speedup S_wall = T(1)/T(p)")
-    fig.suptitle("Scaling crossover: DAG vs plain DP at capacity=1e6 (best config per p)")
+    axes[0][0].set_ylabel(r"DAG speedup $T_{plain}\/T_{dag}$" + "\n>1: DAG faster")
     fig.tight_layout()
     fig.savefig(out, dpi=150)
     plt.close(fig)
@@ -887,6 +893,48 @@ def plot_kpdp_cycles_per_cell(merged: pd.DataFrame, out: Path) -> None:
     plt.close(fig)
 
 
+def plot_kpdp_kc_vs_threads(merged: pd.DataFrame, out: Path) -> None:
+    """K_c(p) = cycles / ((n+1)(c+1)) vs thread count, one panel per family.
+
+    One curve per capacity: a flat curve would mean the per-cell hardware
+    cost is independent of the parallelization; the observed ~4x growth
+    from 1 to 32 threads quantifies the barrier/spinning overhead the
+    extra threads add to each DP cell.
+    """
+    families = sorted(merged["family"].unique())
+    procs = sorted(merged["processors"].unique())
+    fig, axes = plt.subplots(1, len(families), figsize=(5.5 * len(families), 4.6), sharey=True)
+    if len(families) == 1:
+        axes = [axes]
+    xticks = np.arange(len(procs))
+    for ax, family in zip(axes, families):
+        sub = merged[merged["family"] == family]
+        for cap in sorted(sub["capacity"].unique()):
+            curve = (
+                sub[sub["capacity"] == cap]
+                .groupby("processors", as_index=False)["cycles_per_cell"]
+                .median()
+                .sort_values("processors")
+            )
+            ax.plot(
+                [procs.index(p) for p in curve["processors"]],
+                curve["cycles_per_cell"],
+                "o-",
+                color=CAP_COLORS.get(int(cap), "#7f7f7f"),
+                label=f"capacity={cap:.0e}",
+            )
+        ax.set_xticks(xticks, [str(p) for p in procs])
+        ax.set_yscale("log")
+        ax.set_xlabel("threads")
+        ax.set_title(f"max_weight={family}")
+        ax.grid(True, which="both", alpha=0.3)
+        ax.legend(fontsize=8)
+    axes[0].set_ylabel("cycles per DP cell (log)")
+    fig.tight_layout()
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+
+
 def plot_kpdp_tlb_memory_wall(merged: pd.DataFrame, out: Path) -> None:
     """dTLB pressure vs cycles per DP cell, one column per weight family.
 
@@ -961,17 +1009,26 @@ def plot_decomposition(merged: pd.DataFrame, wall_col: str, title: str, out: Pat
     plt.close(fig)
 
 
-def plot_dag_block_grid(configs: pd.DataFrame, out: Path) -> None:
+def plot_dag_block_grid(configs: pd.DataFrame, out: Path, num_items: int | None = None,
+                        family: int | None = None, capacity: int | None = None,
+                        processors: int | None = None) -> None:
     """(item_block x cap_block) heatmaps at BLOCK_GRID_POINT.
 
     Left: median wall time (log colour).  Middle: IPC.  Right: LLC MPKI.
     Shows how tile size trades scheduling overhead against cache locality.
+    Optional overrides select another (num_items, family, capacity,
+    processors) point of the same campaign.
     """
     point = BLOCK_GRID_POINT
+    num_items = point.get("num_items") if num_items is None else num_items
+    family = point["family"] if family is None else family
+    capacity = point["capacity"] if capacity is None else capacity
+    processors = point["processors"] if processors is None else processors
     sub = configs[
-        (configs["family"] == point["family"])
-        & (configs["capacity"] == point["capacity"])
-        & (configs["processors"] == point["processors"])
+        (configs["num_items"] == num_items)
+        & (configs["family"] == family)
+        & (configs["capacity"] == capacity)
+        & (configs["processors"] == processors)
     ]
     cbs = sorted(sub["cap_block"].unique())
     ibs = sorted(sub["item_block"].unique(), reverse=True)
@@ -997,10 +1054,6 @@ def plot_dag_block_grid(configs: pd.DataFrame, out: Path) -> None:
         ax.set_title(label)
         fig.colorbar(image, ax=ax, fraction=0.046)
     axes[0].set_ylabel("item_block")
-    fig.suptitle(
-        f"KnapsackDPDAG tile-size effect (max_weight={point['family']}, "
-        f"capacity={point['capacity']:,}, threads={point['processors']})"
-    )
     fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
@@ -1170,11 +1223,11 @@ def plot_dag_speedup(best: pd.DataFrame, out: Path) -> None:
                     color=CAP_COLORS[cap], label=f"capacity={cap:,}")
         ax.plot(procs, procs, "k--", linewidth=1, label="ideal")
         _style_axis_threads(ax, procs)
+        ax.set_ylim(0, 10)
         ax.set_xlabel("processors (threads)")
         ax.set_title(f"max_weight={family}")
         ax.legend(fontsize=8)
     axes[0].set_ylabel("wall speedup S_wall = T(1)/T(p)")
-    fig.suptitle("KnapsackDPDAG speedup vs thread count (best config)")
     fig.tight_layout()
     fig.savefig(out, dpi=150)
     plt.close(fig)
@@ -1183,21 +1236,19 @@ def plot_dag_speedup(best: pd.DataFrame, out: Path) -> None:
 def plot_comparison(kpdp: pd.DataFrame, best: pd.DataFrame, out: Path) -> None:
     """Bars for KnapsackDP vs KnapsackDPDAG-best on the common grid.
 
-    Rows: weight family; columns: IPC, cycles per DP cell, LLC MPKI and the
-    TOTAL LLC misses per run (log); x: the common thread counts; two bars
-    each (plain DP vs best DAG configuration at capacity=1e6).  The total
-    panel makes the tiling effect explicit: ~20x fewer LLC misses at equal
-    instruction counts.
+    Rows: weight family; columns: IPC, cycles per DP cell and LLC MPKI;
+    x: the common thread counts; two bars each (plain DP vs best DAG
+    configuration at capacity=1e6).  The MPKI panel makes the tiling effect
+    explicit: ~20x fewer LLC misses per instruction.
     """
     metrics = [
         ("ipc", "IPC"),
         ("cycles_per_cell", "cycles per DP cell"),
         ("mpki_llc", "LLC MPKI"),
-        ("ll_cache_miss_rd", "LLC misses per run (log)"),
     ]
     width = 0.35
     fig, axes = plt.subplots(len(CMP_FAMILIES), len(metrics),
-                             figsize=(18, 4.2 * len(CMP_FAMILIES)), squeeze=False)
+                             figsize=(13.5, 4.2 * len(CMP_FAMILIES)), squeeze=False)
     for i, family in enumerate(CMP_FAMILIES):
         k = kpdp[(kpdp["family"] == family) & (kpdp["capacity"] == CMP_CAP)]
         d = best[(best["family"] == family) & (best["capacity"] == CMP_CAP)]
@@ -1209,9 +1260,7 @@ def plot_comparison(kpdp: pd.DataFrame, best: pd.DataFrame, out: Path) -> None:
                 ax.bar(t_i - width / 2, kv.iloc[0] if len(kv) else np.nan, width,
                        color="#1f77b4", label="KnapsackDP" if t_i == 0 else None)
                 ax.bar(t_i + width / 2, dv.iloc[0] if len(dv) else np.nan, width,
-                       color="#d62728", label="KnapsackDPDAG (best)" if t_i == 0 else None)
-            if col == "ll_cache_miss_rd":
-                ax.set_yscale("log")
+                       color="#d62728", label="KnapsackDPDAG" if t_i == 0 else None)
             ax.set_xticks(range(len(CMP_THREADS)))
             ax.set_xticklabels([str(t) for t in CMP_THREADS])
             ax.set_xlabel("threads")
@@ -1219,7 +1268,6 @@ def plot_comparison(kpdp: pd.DataFrame, best: pd.DataFrame, out: Path) -> None:
             ax.set_title(f"max_weight={family}")
             ax.grid(True, axis="y", alpha=0.3)
             ax.legend(fontsize=8)
-    fig.suptitle(f"Plain DP vs tiled DAG DP at capacity={CMP_CAP:,}")
     fig.tight_layout()
     fig.savefig(out, dpi=150)
     plt.close(fig)
@@ -1260,9 +1308,11 @@ def main() -> None:
         "perf_kpdp_ipc_vs_threads.png": lambda: plot_kpdp_ipc(kpdp, OUT_DIR / "perf_kpdp_ipc_vs_threads.png"),
         "perf_kpdp_memory_intensity.png": lambda: plot_kpdp_memory_intensity(kpdp, OUT_DIR / "perf_kpdp_memory_intensity.png"),
         "perf_kpdp_cycles_per_cell.png": lambda: plot_kpdp_cycles_per_cell(kpdp, OUT_DIR / "perf_kpdp_cycles_per_cell.png"),
+        "perf_kpdp_kc_vs_threads.png": lambda: plot_kpdp_kc_vs_threads(kpdp, OUT_DIR / "perf_kpdp_kc_vs_threads.png"),
         "perf_kpdp_tlb_memory_wall.png": lambda: plot_kpdp_tlb_memory_wall(kpdp, OUT_DIR / "perf_kpdp_tlb_memory_wall.png"),
         "perf_kpdp_decomposition.png": lambda: plot_decomposition(kpdp, "speedup", "KnapsackDP speedup decomposition (S_wall = S_cyc * p * r)", OUT_DIR / "perf_kpdp_decomposition.png"),
-        "perf_kpdpdag_block_grid.png": lambda: plot_dag_block_grid(configs, OUT_DIR / "perf_kpdpdag_block_grid.png"),
+        "perf_kpdpdag_block_grid.png": lambda: plot_dag_block_grid(configs, OUT_DIR / "perf_kpdpdag_block_grid.png",
+                                                                   num_items=5000, capacity=1_000_000, processors=32),
         "perf_kpdpdag_miss_vs_tiles.png": lambda: plot_dag_miss_vs_tiles(configs, OUT_DIR / "perf_kpdpdag_miss_vs_tiles.png"),
         "perf_kpdpdag_best_config_map.png": lambda: plot_dag_best_config_map(best, OUT_DIR / "perf_kpdpdag_best_config_map.png"),
         "perf_kpdpdag_reliability.png": lambda: plot_dag_reliability(configs, best, OUT_DIR / "perf_kpdpdag_reliability.png"),

@@ -67,7 +67,6 @@ ha una complessità temporale e spaziale $O(n * W)$
     Return[$"table"["index"]["max_weight"]$]
   },
 
-  supplement: none,
 ) <alg:knapsack-memo>
 
 la seconda è una versione bottom-up (tabulation) con la medesima complessità ma che evita la ricorsione
@@ -100,7 +99,6 @@ la seconda è una versione bottom-up (tabulation) con la medesima complessità m
     Return[$"table"["len"]["max_weight"]$]
   },
 
-  supplement: none,
 ) <alg:knapsack-tab>
 
 Una soluzione più raffinata di questa prevede di usare solo l'ultima riga calcolata, in modo da ridurre la complessità spaziale a $O(W)$
@@ -120,7 +118,6 @@ Una soluzione più raffinata di questa prevede di usare solo l'ultima riga calco
     Return[$"table"["max_weight"]$]
   },
 
-  supplement: none,
 ) <alg:knapsack-opt>
 
 Lo svantaggio principale delle soluzioni basate su programmazione dinamica è che non lavorano bene su casi in cui i pesi non sono interi
@@ -158,7 +155,6 @@ della capacità rimanente.
     Return[$"profit"$]
   },
 
-  supplement: none,
 ) <alg:fknapsack>
 
 
