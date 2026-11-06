@@ -4,6 +4,7 @@
 #SBATCH --cpus-per-task=32
 #SBATCH --time=00:30:00
 #SBATCH --mem=48G
+#SBATCH --exclusive
 #SBATCH --output=perf_big.out
 #SBATCH --error=perf_big.err
 
@@ -40,19 +41,31 @@ set -euo pipefail
 SEED=42
 CAPACITY=1000000
 BIN="./build/kpbench"
-REPEATS=2
+REPEATS="${REPEATS:-2}"
 OUT_DIR="perf_big_out"
 SUMMARY="$OUT_DIR/perf_summary.csv"
 SUMMARY_HEADER="test,num_items,max_weight,capacity,threads,item_block,cap_block,tag,value,unit,event,runtime_ns,runtime_pct,metric_value,metric_unit,repeat,time_s"
 PERF_EVENTS="cycles,instructions,cache-references,cache-misses,branch-misses,L1-dcache-loads,L1-dcache-load-misses,ll_cache_rd,ll_cache_miss_rd,dTLB-load-misses,iTLB-load-misses"
 
 export LC_ALL=C
+
+# Pin the OpenMP threads (one per core, compact): without it threads migrate and
+# the timings of a memory-bound kernel depend on where the scheduler puts them.
+export OMP_PROC_BIND="${OMP_PROC_BIND:-close}"
+export OMP_PLACES="${OMP_PLACES:-cores}"
 mkdir -p "$OUT_DIR"
 rm -f "$SUMMARY"
 
 if [ ! -x "$BIN" ]; then
   echo "ERROR: $BIN not found or not executable." >&2
-  echo "       Build it first: cmake --preset gpu && cmake --build build" >&2
+  echo "       Build it first: cmake --preset release && cmake --build build" >&2
+  exit 1
+fi
+
+# Refuse to measure a non-optimised binary (the "default" preset is Debug).
+if ! "$BIN" --test bandwidth --capacity 1000 --save "" | grep -q '^build: Release'; then
+  echo "ERROR: $BIN is not a Release build. Build it with:" >&2
+  echo "       cmake --preset release && cmake --build build" >&2
   exit 1
 fi
 

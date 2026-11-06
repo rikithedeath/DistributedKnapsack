@@ -6,6 +6,7 @@
 #SBATCH --output=perf_kpdp.out
 #SBATCH --error=perf_kpdp.err
 #SBATCH --mem=32G
+#SBATCH --exclusive
 
 # Cache-miss investigation for KnapsackDP with perf stat.
 # Small subset of run_kpdp.sbatch: max_weight {10,1000} x threads {1,8,32}
@@ -29,7 +30,7 @@
 # counters with times from a separate campaign, which is not comparable).
 # Each configuration is repeated REPEATS times; every repeat gets its own
 # perf stat and its own time_s, tagged by the repeat column.  Build kpbench
-# first:  cmake --preset default && cmake --build build
+# first:  cmake --preset release && cmake --build build
 # Clean baseline timings for cross-checks remain in doc/data/result_kpdp.json.
 #
 # Machine-parseable output:
@@ -52,7 +53,7 @@ set -euo pipefail
 SEED=42
 NUM_ITEMS=50
 BIN="./build/kpbench"
-REPEATS=3
+REPEATS="${REPEATS:-3}"
 TEST="knapsackdp"
 OUT_DIR="perf_kpdp_out"
 SUMMARY="$OUT_DIR/perf_summary.csv"
@@ -60,12 +61,24 @@ SUMMARY_HEADER="max_weight,capacity,threads,tag,value,unit,event,runtime_ns,runt
 PERF_EVENTS="cycles,instructions,cache-references,cache-misses,branch-misses,L1-dcache-loads,L1-dcache-load-misses,ll_cache_rd,ll_cache_miss_rd,dTLB-load-misses,iTLB-load-misses"
 
 export LC_ALL=C
+
+# Pin the OpenMP threads (one per core, compact): without it threads migrate and
+# the timings of a memory-bound kernel depend on where the scheduler puts them.
+export OMP_PROC_BIND="${OMP_PROC_BIND:-close}"
+export OMP_PLACES="${OMP_PLACES:-cores}"
 mkdir -p "$OUT_DIR"
 rm -f "$SUMMARY"
 
 if [ ! -x "$BIN" ]; then
   echo "ERROR: $BIN not found or not executable." >&2
-  echo "       Build it first: cmake --preset default && cmake --build build" >&2
+  echo "       Build it first: cmake --preset release && cmake --build build" >&2
+  exit 1
+fi
+
+# Refuse to measure a non-optimised binary (the "default" preset is Debug).
+if ! "$BIN" --test bandwidth --capacity 1000 --save "" | grep -q '^build: Release'; then
+  echo "ERROR: $BIN is not a Release build. Build it with:" >&2
+  echo "       cmake --preset release && cmake --build build" >&2
   exit 1
 fi
 

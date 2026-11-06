@@ -6,8 +6,17 @@
 #SBATCH --output=shared_memory.out
 #SBATCH --error=shared_memory.err
 #SBATCH --mem=32G
+#SBATCH --exclusive
 
 set -euo pipefail
+
+# Superseded by run_timing.sbatch (standalone kpbench, pinning, repetitions,
+# all solvers). Kept to reproduce the first Python-driven campaign.
+
+# Pin the OpenMP threads (one per core, compact): without it threads migrate and
+# the timings of a memory-bound kernel depend on where the scheduler puts them.
+export OMP_PROC_BIND="${OMP_PROC_BIND:-close}"
+export OMP_PLACES="${OMP_PLACES:-cores}"
 
 NUM_THREADS=32
 SEED=42
