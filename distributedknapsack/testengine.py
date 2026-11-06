@@ -7,13 +7,21 @@ import os
 from abc import ABC, abstractmethod
 from typing import Dict, Tuple, Optional
 from pathlib import Path
-from mpi4py import MPI  # type: ignore
-from libdistributed_knapsack import (KnapsackArguments, KnapsackSolution, knapsackdp, knapsackcopa,
-                                     knapsackcopasequential, knapsackdpdag, knapsackdpmpi, knapsackdpgpu,
-                                     get_all_sections, get_dag_stats)
+try:
+    # Only the MPI solver needs mpi4py; shared-memory runs must not depend on it
+    # (importing mpi4py also initialises MPI).
+    from mpi4py import MPI  # type: ignore
+except ImportError:  # pragma: no cover - depends on the environment
+    MPI = None
+from libdistributed_knapsack import (KnapsackArguments, KnapsackSolution, knapsackdp, knapsackdpbits,
+                                     knapsackdptiled, knapsackcopa, knapsackcopasequential, knapsackdpdag,
+                                     knapsackdpmpi, knapsackdpgpu, get_all_sections, get_dag_stats,
+                                     get_phases, omp_max_threads, build_info)
 
 
 def ensure_mpi_initialized() -> None:
+    if MPI is None:
+        raise RuntimeError("mpi4py is not installed: the MPI solver is unavailable")
     if not MPI.Is_initialized():
         MPI.Init()
 
@@ -35,7 +43,9 @@ def resolve_processors(test_name: str, test: "BenchmarkTest") -> int:
         return MPI.COMM_WORLD.size
     if "gpu" in test_name:
         return _env_int("KP_GPU_THREADS", test.numThreads)
-    return _env_int("OMP_NUM_THREADS", test.numThreads)
+    # What OpenMP really uses, not the environment variable: setting
+    # OMP_NUM_THREADS after libgomp has been loaded has no effect.
+    return omp_max_threads()
 
 
 class BenchmarkTest(ABC):
@@ -46,6 +56,7 @@ class BenchmarkTest(ABC):
         self.testType :str = ""
         self.is_mpi_test: bool = False
         self.is_dag_test: bool = False
+        self.is_tiled_test: bool = False
     @abstractmethod
     def onExecute(self) -> KnapsackSolution:
         pass
@@ -57,9 +68,9 @@ class BenchmarkTest(ABC):
         self.numItems = len(weights)
 
     def execute(self) -> Tuple[float, KnapsackSolution]:
-        start_time = time.time()
+        start_time = time.perf_counter()  # monotonic, unlike time.time()
         result = self.onExecute()
-        end_time = time.time()
+        end_time = time.perf_counter()
         return end_time - start_time, result
 
 
@@ -67,6 +78,22 @@ class BenchmarkTest(ABC):
 class BenchmarkKnapsackDP(BenchmarkTest):
     def onExecute(self) -> KnapsackSolution:
         return knapsackdp(self.args)
+
+
+class BenchmarkKnapsackDPBits(BenchmarkTest):
+    def onExecute(self) -> KnapsackSolution:
+        return knapsackdpbits(self.args)
+
+
+class BenchmarkKnapsackDPTiled(BenchmarkTest):
+    def __init__(self, item_block: int = 10, cap_block: int = 0) -> None:
+        super().__init__()
+        self.item_block = item_block
+        self.cap_block = cap_block
+        self.is_tiled_test = True
+
+    def onExecute(self) -> KnapsackSolution:
+        return knapsackdptiled(self.args, self.item_block, self.cap_block)
 
 
 class BenchmarkKnapsackCOPA(BenchmarkTest):
@@ -85,6 +112,7 @@ class BenchmarkKnapsackDPDAG(BenchmarkTest):
         self.item_block = item_block
         self.cap_block = cap_block
         self.is_dag_test = True
+        self.is_tiled_test = True
 
     def onExecute(self) -> KnapsackSolution:
         return knapsackdpdag(self.args, self.item_block, self.cap_block)
@@ -125,7 +153,7 @@ class TestRegister:
 
     def _append_result(self, test_name: str, test: BenchmarkTest,
                        duration: float, result: KnapsackSolution,
-                       sections: dict, stats) -> None:
+                       sections: dict, stats, phases) -> None:
         """Append test result (with time sections and DAG frontier stats) to JSON file."""
         if not self._save_file:
             return
@@ -133,6 +161,7 @@ class TestRegister:
         processors = resolve_processors(test_name, test)
         test_type = "distributed memory" if test.is_mpi_test else "shared memory"
         hostname = MPI.Get_processor_name() if test.is_mpi_test else os.uname().nodename
+        build = build_info()
 
         entry = {
             'hostname': hostname,
@@ -157,9 +186,16 @@ class TestRegister:
                 }
                 for section_name, section in sections.items()
             },
+            'phases': {name: seconds for name, seconds in phases},
+            'build': dict(build),
+            'omp': {
+                'threads_effective': omp_max_threads(),
+                'proc_bind': os.environ.get('OMP_PROC_BIND', ''),
+                'places': os.environ.get('OMP_PLACES', ''),
+            },
         }
 
-        if test.is_dag_test:
+        if test.is_tiled_test:
             entry['item_block'] = getattr(test, 'item_block', None)
             entry['cap_block'] = getattr(test, 'cap_block', None)
 
@@ -213,7 +249,13 @@ class TestRegister:
                     print(f"    {name}: count={sec.count} mean={sec.mean:.4f}ms "
                           f"min={sec.min:.4f}ms max={sec.max:.4f}ms")
 
-            stats = get_dag_stats()
+            phases = get_phases()
+            if phases:
+                print("  phases: " + " ".join(f"{n}={t:.4f}s" for n, t in phases))
+
+            # DAG statistics are global "last DAG run" state: only meaningful
+            # right after a DAG run (they would be stale for any other test).
+            stats = get_dag_stats() if test.is_dag_test else None
             if stats:
                 print(f"    DAG stats: tiles={stats.tiles} edges={stats.edges} "
                       f"levels={stats.levels}")
@@ -223,7 +265,7 @@ class TestRegister:
                           f"max={stats.frontierMax:.0f}")
 
             if self._save_file:
-                self._append_result(test_name, test, duration, result, sections, stats)
+                self._append_result(test_name, test, duration, result, sections, stats, phases)
 
 
 

@@ -1,5 +1,7 @@
 #include "Knapsack/knapsack.hpp"
 #include "Knapsack/knapsackdpdag_impl.hpp"
+#include "build_info.hpp"
+#include "phases.hpp"
 #include "time.hpp"
 #include <argparse/argparse.hpp>
 #include <algorithm>
@@ -11,8 +13,11 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <memory>
 #include <optional>
+#include <numeric>
 #include <random>
+#include <set>
 #include <spdlog/spdlog.h>
 #include <sstream>
 #include <string>
@@ -117,6 +122,73 @@ void append_json_entry(const std::string &path, const std::string &entry)
 	out << "[\n  " << body << "\n]\n";
 }
 
+std::string env_str(const char *name)
+{
+	const char *value = std::getenv(name);
+	return value == nullptr ? std::string() : std::string(value);
+}
+
+/// Optimal value computed by the textbook in-place 1-D DP (serial, value only).
+/// It shares no code with the solvers under test, so it is an independent
+/// reference for --verify.
+int reference_value(const std::vector<int> &weights, const std::vector<int> &values, int capacity)
+{
+	std::vector<int> row(static_cast<std::size_t>(capacity) + 1, 0);
+	for (std::size_t i = 0; i < weights.size(); ++i)
+		for (int w = capacity; w >= weights[i]; --w)
+			row[w] = std::max(row[w], row[w - weights[i]] + values[i]);
+	return row[capacity];
+}
+
+/// A returned solution is valid if its items are distinct, in range, fit the
+/// capacity and add up to the reported weight and value.
+bool solution_is_valid(const KnapsackSolution &s, const std::vector<int> &weights, const std::vector<int> &values,
+					   int capacity)
+{
+	std::set<int> seen;
+	long long w = 0, v = 0;
+	for (int idx : s.items)
+	{
+		if (idx < 0 || idx >= static_cast<int>(weights.size()) || !seen.insert(idx).second)
+			return false;
+		w += weights[idx];
+		v += values[idx];
+	}
+	return w <= capacity && w == s.totalWeight && v == s.totalValue;
+}
+
+/// STREAM-like triad a[i] = b[i] + s * c[i] on three arrays of n doubles,
+/// first-touched in parallel with the same static schedule. Returns the best
+/// time of `reps` repetitions; bytes moved per repetition = 3 * 8 * n
+/// (STREAM convention, write-allocate traffic not counted).
+double triad_best_time(std::int64_t n, int reps)
+{
+	std::unique_ptr<double[]> a(new double[static_cast<std::size_t>(n)]);
+	std::unique_ptr<double[]> b(new double[static_cast<std::size_t>(n)]);
+	std::unique_ptr<double[]> c(new double[static_cast<std::size_t>(n)]);
+#pragma omp parallel for schedule(static)
+	for (std::int64_t i = 0; i < n; ++i)
+	{
+		a[i] = 0.0;
+		b[i] = 1.0;
+		c[i] = 2.0;
+	}
+	double best = 1e300;
+	for (int r = 0; r < reps; ++r)
+	{
+		const auto t0 = std::chrono::steady_clock::now();
+#pragma omp parallel for schedule(static)
+		for (std::int64_t i = 0; i < n; ++i)
+			a[i] = b[i] + 3.0 * c[i];
+		const auto t1 = std::chrono::steady_clock::now();
+		best = std::min(best, std::chrono::duration<double>(t1 - t0).count());
+	}
+	// Keep the result observable so the loops cannot be optimised away.
+	if (a[n / 2] != 7.0)
+		spdlog::warn("triad check failed");
+	return best;
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -125,7 +197,8 @@ int main(int argc, char **argv)
 	program.add_description("Standalone knapsack benchmark (pure C++, perf-friendly).");
 	program.add_argument("--test")
 		.default_value(std::string("all"))
-		.help("Test to run: knapsackdp, knapsackdpdag, knapsackdp_gpu");
+		.help("Test to run: knapsackdp, knapsackdpbits, knapsackdptiled, knapsackdpdag, knapsackdp_gpu, bandwidth "
+			  "(bandwidth: STREAM-like triad on 3 arrays of --capacity doubles)");
 	program.add_argument("--seed").scan<'i', int>().default_value(42).help("Random seed");
 	program.add_argument("--numItems").scan<'i', int>().default_value(30).help("Number of items");
 	program.add_argument("--numThreads").scan<'i', int>().default_value(1).help("Number of threads");
@@ -142,6 +215,9 @@ int main(int argc, char **argv)
 	program.add_argument("--capBlock").scan<'i', int>().default_value(0)
 		.help("Capacity block size for knapsackdpdag (default: 0)");
 	program.add_argument("--dump-instance").flag().help("Print the generated instance and exit");
+	program.add_argument("--verify")
+		.flag()
+		.help("Also compute the optimum with an independent serial 1-D DP (not timed) and fail on mismatch");
 
 	try
 	{
@@ -155,11 +231,11 @@ int main(int argc, char **argv)
 	}
 
 	const std::string test = program.get<std::string>("--test");
-	const std::array<std::string, 3> allowed{"knapsackdp", "knapsackdpdag", "knapsackdp_gpu"};
+	const std::array<std::string, 6> allowed{"knapsackdp",	  "knapsackdpbits", "knapsackdptiled",
+											 "knapsackdpdag", "knapsackdp_gpu", "bandwidth"};
 	if (std::find(allowed.begin(), allowed.end(), test) == allowed.end())
 	{
-		fmt::print(stderr, "Error: unknown test '{}'. Allowed values: knapsackdp, knapsackdpdag, knapsackdp_gpu\n",
-				   test);
+		fmt::print(stderr, "Error: unknown test '{}'. Allowed values: {}\n", test, fmt::join(allowed, ", "));
 		return 1;
 	}
 
@@ -175,10 +251,46 @@ int main(int argc, char **argv)
 	const int seed = program.get<int>("--seed");
 	const std::string saveFile = program.get<std::string>("--save");
 	const bool dump_instance = program.get<bool>("--dump-instance") != 0;
+	const bool verify = program.get<bool>("--verify") != 0;
 
 	// Control the OpenMP thread count before any OpenMP usage happens.
 	setenv("OMP_NUM_THREADS", std::to_string(numThreads).c_str(), 1);
 	omp_set_num_threads(numThreads);
+	// What OpenMP will really use (it can differ from the request, e.g. with
+	// OMP_DYNAMIC or a thread limit): this, not the request, is recorded.
+	const int threadsEffective = omp_get_max_threads();
+	if (threadsEffective != numThreads)
+		spdlog::warn("requested {} threads, OpenMP will use {}", numThreads, threadsEffective);
+
+	char hostname[256] = {0};
+	gethostname(hostname, sizeof(hostname) - 1);
+	const std::string buildJson = fmt::format(
+		"\"build\": {{\"type\": \"{}\", \"compiler\": \"{}\", \"flags\": \"{}\", \"commit\": \"{}\", \"timers\": {}}}, "
+		"\"omp\": {{\"threads_effective\": {}, \"proc_bind\": \"{}\", \"places\": \"{}\"}}",
+		json_escape(KP_BUILD_TYPE), json_escape(KP_CXX_COMPILER), json_escape(KP_CXX_FLAGS), json_escape(KP_GIT_COMMIT),
+		KP_TIMERS_ENABLED ? "true" : "false", threadsEffective, json_escape(env_str("OMP_PROC_BIND")),
+		json_escape(env_str("OMP_PLACES")));
+	fmt::print("build: {} | {} | flags \"{}\" | commit {} | timers {} | threads {} | proc_bind '{}' | places '{}'\n",
+			   KP_BUILD_TYPE, KP_CXX_COMPILER, KP_CXX_FLAGS, KP_GIT_COMMIT, KP_TIMERS_ENABLED ? "on" : "off",
+			   threadsEffective, env_str("OMP_PROC_BIND"), env_str("OMP_PLACES"));
+
+	if (test == "bandwidth")
+	{
+		const std::int64_t n = std::max(1, capacity);
+		constexpr int reps = 10;
+		const double t = triad_best_time(n, reps);
+		const double gbs = 3.0 * 8.0 * static_cast<double>(n) / t / 1e9;
+		fmt::print("bandwidth: {:.6f}s | Elements: {} | GB/s: {:.2f}\n", t, n, gbs);
+		if (!saveFile.empty())
+		{
+			append_json_entry(saveFile,
+							  fmt::format("{{\"hostname\": \"{}\", \"testname\": \"bandwidth\", \"time\": {}, "
+										  "\"processors\": {}, \"elements\": {}, \"bandwidth_gbs\": {}, {}}}",
+										  json_escape(hostname), t, threadsEffective, n, gbs, buildJson));
+			fmt::print("Result saved to {}\n", saveFile);
+		}
+		return 0;
+	}
 
 	// Generate the instance: weights first, then values (same order as the
 	// Python driver, but with std::mt19937 instead of Python's random module).
@@ -208,6 +320,14 @@ int main(int argc, char **argv)
 	{
 		solution = knapsackdp(weights, values, capacity);
 	}
+	else if (test == "knapsackdpbits")
+	{
+		solution = knapsackdpbits(weights, values, capacity);
+	}
+	else if (test == "knapsackdptiled")
+	{
+		solution = knapsackdptiled(weights, values, capacity, itemBlock, capBlock);
+	}
 	else if (test == "knapsackdpdag")
 	{
 		solution = knapsackdpdag(weights, values, capacity, itemBlock, capBlock);
@@ -227,6 +347,33 @@ int main(int argc, char **argv)
 
 	fmt::print("{}: {:.4f}s | Items: {} | Profit: {} | Weight: {}\n", test, duration, numItems, solution.totalValue,
 			   solution.totalWeight);
+
+	// Coarse phases recorded by the solver (always on, see phases.hpp).
+	const auto phases = PhaseTimes::instance().get();
+	std::string phasesJson = "{";
+	for (std::size_t k = 0; k < phases.size(); ++k)
+		phasesJson += fmt::format("{}\"{}\": {}", k == 0 ? "" : ", ", phases[k].first, phases[k].second);
+	phasesJson += "}";
+	if (!phases.empty())
+	{
+		fmt::print("  phases:");
+		for (const auto &[name, sec] : phases)
+			fmt::print(" {}={:.4f}s", name, sec);
+		fmt::print("\n");
+	}
+
+	const bool valid = solution_is_valid(solution, weights, values, capacity);
+	std::string verifiedJson = "null";
+	bool verifiedOk = true;
+	if (verify)
+	{
+		const int ref = reference_value(weights, values, capacity);
+		verifiedOk = ref == solution.totalValue;
+		verifiedJson = verifiedOk ? "true" : "false";
+		fmt::print("  verify: reference={} solver={} -> {}\n", ref, solution.totalValue, verifiedOk ? "OK" : "MISMATCH");
+	}
+	if (!valid)
+		fmt::print(stderr, "ERROR: the returned item set is not a valid solution\n");
 
 	const auto sections = TimeSectionRegister::instance().get_all_sections();
 	if (!sections.empty())
@@ -255,11 +402,7 @@ int main(int argc, char **argv)
 	}
 
 	// Save a schema-compatible entry to the JSON results file.
-	char hostname[256] = {0};
-	gethostname(hostname, sizeof(hostname) - 1);
-
-	const int processors =
-		test == "knapsackdp_gpu" ? env_int("KP_GPU_THREADS", numThreads) : env_int("OMP_NUM_THREADS", numThreads);
+	const int processors = test == "knapsackdp_gpu" ? env_int("KP_GPU_THREADS", numThreads) : threadsEffective;
 
 	std::string timeSections;
 	if (sections.empty())
@@ -285,11 +428,14 @@ int main(int argc, char **argv)
 	std::string entry = fmt::format(
 		"{{\"hostname\": \"{}\", \"testname\": \"{}\", \"testtype\": \"shared memory\", \"time\": {}, "
 		"\"processors\": {}, \"solution_weight\": {}, \"solution_profit\": {}, \"capacity\": {}, \"num_items\": {}, "
-		"\"min_weight\": {}, \"max_weight\": {}, \"seed\": {}, \"time_sections\": {}",
+		"\"min_weight\": {}, \"max_weight\": {}, \"min_value\": {}, \"max_value\": {}, \"sum_weights\": {}, "
+		"\"seed\": {}, "
+		"\"time_sections\": {}, \"phases\": {}, \"valid\": {}, \"verified\": {}, {}",
 		json_escape(hostname), test, duration, processors, solution.totalWeight, solution.totalValue, capacity, numItems,
-		minWeight, maxWeight, seed, timeSections);
+		minWeight, maxWeight, minValue, maxValue, std::accumulate(weights.begin(), weights.end(), 0LL), seed, timeSections, phasesJson, valid ? "true" : "false", verifiedJson,
+		buildJson);
 
-	if (test == "knapsackdpdag")
+	if (test == "knapsackdpdag" || test == "knapsackdptiled")
 		fmt::format_to(std::back_inserter(entry), ", \"item_block\": {}, \"cap_block\": {}", itemBlock, capBlock);
 
 	if (test == "knapsackdpdag" && dagStats && dagStats->levels > 0)
@@ -308,5 +454,5 @@ int main(int argc, char **argv)
 		fmt::print("Result saved to {}\n", saveFile);
 	}
 
-	return 0;
+	return (valid && verifiedOk) ? 0 : 2;
 }

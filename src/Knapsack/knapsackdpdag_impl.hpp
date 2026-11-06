@@ -43,7 +43,7 @@ struct NodeData
 	// taking local item a; empty marker {1,0} (first > second) when item a
 	// never fits in this tile's capacity range.
 	std::vector<std::pair<int, int>> dep_ranges;
-	BlockMatrix block; // DP block, dimensions rows x width
+	BlockMatrix block; // DP block, rows x width; allocated by compute_tile (first touch), empty after build_graph
 };
 
 namespace _detail
@@ -78,8 +78,9 @@ struct DAGStats
  *
  * Vertices are created in row-major order, so the vertex descriptor of tile
  * (b, q) is `b * nq + q` (where `nq` is the number of capacity blocks). Each
- * vertex carries an allocated NodeData block. Edges encode the dependencies a
- * tile needs before it can be computed.
+ * vertex carries its NodeData; the DP block itself is allocated lazily by
+ * compute_tile. Edges encode the dependencies a tile needs before it can be
+ * computed; each (source, target) pair appears once.
  *
  * @param weights  item weights (size n)
  * @param capacity knapsack capacity

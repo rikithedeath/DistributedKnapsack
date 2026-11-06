@@ -24,7 +24,7 @@
     {
       "name": "default",
       "displayName": "GCC",
-      "description": "Uso dei compilatori: C = /usr/bin/gcc, CXX = /usr/bin/g++",
+      "description": "Debug build for development: fine-grained timers ON. Not for benchmarks.",
       "binaryDir": "build",
       "generator": "Ninja",
       "cacheVariables": {
@@ -43,8 +43,10 @@
       "displayName": "GCC Release",
       "inherits": "default",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
-      }
+        "CMAKE_BUILD_TYPE": "Release",
+        "ENABLE_TIMERS": "OFF"
+      },
+      "description": "Optimised build for every benchmark campaign: fine-grained timers OFF."
     },
     {
       "name": "mpi",
@@ -63,7 +65,8 @@
       ],
       "cacheVariables": {
         "KP_GPU": "ON",
-        "KP_MPI": "OFF"
+        "KP_MPI": "OFF",
+        "ENABLE_TIMERS": "OFF"
       }
     },
     {
@@ -74,6 +77,15 @@
       "cacheVariables": {
         "KP_GPU": "ON",
         "KP_MPI": "ON"
+      }
+    },
+    {
+      "name": "release-timers",
+      "displayName": "GCC Release + timers",
+      "description": "Optimised build with the fine-grained per-item timers, only for the time-section breakdown (adds overhead).",
+      "inherits": "release",
+      "cacheVariables": {
+        "ENABLE_TIMERS": "ON"
       }
     }
   ]

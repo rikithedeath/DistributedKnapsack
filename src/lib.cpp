@@ -1,7 +1,10 @@
 #include "Knapsack/knapsack.hpp"
 #include "Knapsack/knapsackdpdag_impl.hpp"
+#include "build_info.hpp"
+#include "phases.hpp"
 #include "time.hpp"
 #include <iostream>
+#include <omp.h>
 #include <pybind11/cast.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -124,6 +127,15 @@ PYBIND11_MODULE(libdistributed_knapsack, m)
 		"knapsackdp",
 		[](KnapsackArguments args, int cap_block) { return knapsackdp(args.weights, args.values, args.capacity); },
 		py::arg("args"), py::arg("cap_block") = 1);
+	m.def(
+		"knapsackdpbits", [](KnapsackArguments args) { return knapsackdpbits(args.weights, args.values, args.capacity); },
+		py::arg("args"));
+	m.def(
+		"knapsackdptiled",
+		[](KnapsackArguments args, int item_block, int cap_block) {
+			return knapsackdptiled(args.weights, args.values, args.capacity, item_block, cap_block);
+		},
+		py::arg("args"), py::arg("item_block") = 10, py::arg("cap_block") = 0);
 	m.def("knapsackcopa", &knapsackcopasolver, py::arg("args"));
 	m.def("knapsackcopasequential", &knapsackcopasequentialsolver, py::arg("args"));
 	m.def("knapsackdpgpu", &knapsackdpgpusolver, py::arg("args"));
@@ -155,4 +167,18 @@ PYBIND11_MODULE(libdistributed_knapsack, m)
 		.def_property_readonly("frontierMin", [](const DAGStats &s) { return ba::min(s.frontier); })
 		.def_property_readonly("frontierMax", [](const DAGStats &s) { return ba::max(s.frontier); });
 	m.def("get_dag_stats", &get_dag_stats);
+	// Threads OpenMP will actually use: the Python driver checks it against the
+	// request, because OMP_NUM_THREADS is read once, when libgomp is loaded.
+	m.def("omp_max_threads", []() { return omp_get_max_threads(); });
+	m.def("set_num_threads", [](int n) { omp_set_num_threads(n); }, py::arg("n"));
+	m.def("get_phases", []() { return PhaseTimes::instance().get(); });
+	m.def("build_info", []() {
+		py::dict d;
+		d["type"] = KP_BUILD_TYPE;
+		d["compiler"] = KP_CXX_COMPILER;
+		d["flags"] = KP_CXX_FLAGS;
+		d["commit"] = KP_GIT_COMMIT;
+		d["timers"] = static_cast<bool>(KP_TIMERS_ENABLED);
+		return d;
+	});
 }

@@ -5,8 +5,10 @@ file(GLOB TEST_SOURCES  *.cpp *c )
 get_target_property(TGT_INCLUDE_DIRS ${TARGET_NAME} INCLUDE_DIRECTORIES)
 get_target_property(TGT_LIBRARIES ${TARGET_NAME} LINK_LIBRARIES)
 get_target_property(SRC_LIST ${TARGET_NAME} SOURCES)
-list(FILTER SRC_LIST EXCLUDE REGEX ".*main.*")
-list(FILTER SRC_LIST EXCLUDE REGEX ".*lib.*")
+# Match the file name only: a regex on the whole path (".*main.*") also dropped
+# every source when the checkout lived under e.g. "DistributedKnapsack-main/".
+list(FILTER SRC_LIST EXCLUDE REGEX "/main\\.cpp$")
+list(FILTER SRC_LIST EXCLUDE REGEX "/lib\\.cpp$")
 add_executable(${UT_TARGET_NAME} ${TEST_SOURCES} ${SRC_LIST})
 target_sources(${UT_TARGET_NAME} PUBLIC
     FILE_SET CXX_MODULES
