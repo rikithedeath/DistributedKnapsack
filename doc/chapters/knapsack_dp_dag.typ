@@ -2,7 +2,7 @@
 #import "kp_dp_algo.typ": *
 
 #show: style-algorithm
-= Knapsack DP DAG
+= DP a tile su un grafo delle dipendenze
 
 Un modello alternativo di esecuzione al knapsack classico è pensare di creare un Directed Acyclic Graph che rappresenti il flusso di esecuzione invece di operare direttamente sulla linea come frontiera. Per farlo si consideri la ricorrenza $"Dp"_i(w)=max("Dp"_(i-1)(w), "Dp"_(i-1)(w-w_i)+v_i)$, allora si può raggiungere uno stato $(i,w)$ da $(i-1,w)$ e da $(i-1,w-w_i)$, questo insieme di archi impone sostanzialmente l'ordine di esecuzione dell'algoritmo sulle diverse celle della DP e dipende solo da $w_i$. A questo punto si possono definire le frontiere di questo DAG, in modo semplice, come l'insieme degli stati che possono essere calcolati in parallelo, dato che non dipendono da altri stati, formalmente dati due stati $u,v in F$ allora $u arrow.not v and v arrow.not u$ che formano quindi una anti chain.
 
@@ -107,7 +107,7 @@ Le misure condividono l'ambiente del capitolo precedente (nodo ARM Neoverse-N1 d
   caption: [Speedup del KnapsackDPDAG a $n = 50$ per famiglia di peso e capacity.],
 ) <fig:dag-speedup-cap>
 
-A $n = 50$ lo sweep sulla capacity mostra uno speedup a muro che si ferma nell'ordine di $2.2 - 2.4 times$ qualunque siano famiglia di peso e capacity, e l'*insn ratio* a 32 thread sale a $4.4 times$: quasi un quarto delle istruzioni eseguite in parallelo è spinning su code e atomiche. Il collo non dipende dunque dalla taglia del problema ma dal rapporto fra lavoro per tile e costo di sincronizzazione su frontiere strette.
+A $n = 50$ lo sweep sulla capacity mostra uno speedup a muro che si ferma nell'ordine di $2.2 - 2.4 times$ qualunque siano famiglia di peso e capacity, e l'*insn ratio* a 32 thread sale a $4.4 times$: il run parallelo esegue 4,4 volte le istruzioni del seriale, quindi circa il 77% delle sue istruzioni ($1 - 1\/4.4$) è lavoro in più. Il solver a livelli non usa code né operazioni atomiche: quel lavoro in più è attesa attiva dei thread sulla barriera implicita di fine `parallel for`, a ogni livello. Il collo non dipende dunque dalla taglia del problema ma dal rapporto fra lavoro per tile e costo di sincronizzazione su frontiere strette.
 
 #figure(
   image("../images/perf_kpdpdag_speedup_vs_n.png", width: 100%),
@@ -159,12 +159,37 @@ Il limite di scala ha anche una spiegazione strutturale: il parallelismo effetti
 
 La struttura del grafo rende la distribuzione deterministica: oltre all'arco col tile sopra $(b-1, q)$, il range di dipendenza shiftato di $w_i$ crea sistematicamente un arco col tile alla sua sinistra $(b, q-1)$, quindi il livello di un tile è $"level"(b,q) = b+q$ e le frontiere sono le anti-diagonali della griglia di tile. Ne segue che i livelli sono $n_b + n_q - 1$, il picco di larghezza è $min(n_b, n_q)$ e la media $n_b n_q\/(n_b+n_q-1)$: tutti i valori misurati in @tab:dag-frontiers coincidono con queste formule. La relazione presuppone pesi $w_i >= 1$ e $"maxWeight" <= "cap"_b$: con pesi nulli, o pesi tali da scavalcare più blocchi di capacità, la struttura delle dipendenze sarebbe diversa, pur restando valido l'ordinamento topologico row-major. La conseguenza è che a $n = 50$ il picco di parallelismo esposto è solo $n_b = ceil(n\/"item"_b)$, cioè fra 2 e 10 tile per livello a seconda della granularità: con 32 esecutori la maggior parte resta ferma a ogni frontiera, e questo è il vero limite di scaling della versione DAG a pochi oggetti. Il valore cresce con $n$ (a $n = 1000$ il picco arriva a 101 tile, oltre il numero di thread) e spiega perché le curve di speedup di @fig:dag-speedup si innalzino col numero di oggetti, in accordo con i valori di @tab:dag-crossover, così come la regola empirica della granularità (più thread richiedono `item_block` più piccolo, cioè più livelli e frontiere più larghe, fino alla saturazione a $n_q$ discussa sopra).
 
+=== Un limite superiore allo speedup del solver a livelli <sec:dag-bound>
+
+Le formule delle frontiere danno direttamente un limite allo speedup ottenibile dal solver a livelli, indipendente dalla macchina. Se i tile hanno lo stesso costo $tau$, il livello $L$ con $|F_L|$ tile richiede $ceil(|F_L| \/ p) dot tau$ con $p$ thread, per cui
+
+$
+  S_"max"(p) = (n_b dot n_q) / (sum_L ceil(|F_L| \/ p)), quad lim_(p -> infinity) S_"max"(p) = (n_b n_q) / (n_b + n_q - 1)
+$
+
+cioè il rapporto fra lavoro e profondità (*work/span*) del grafo dei tile. A $n = 50$ con $"item"_b = 10$ e $"cap"_b = 10^4$, $C = 10^6$ ($n_b = 5$, $n_q = 101$, ogni frontiera ha al più 5 tile) il limite vale $505 \/ 105 approx 4.8$ per ogni $p >= 5$: lo speedup misurato di $approx 2.4$ è circa la metà del massimo teorico. Il confronto fra la curva misurata e $S_"max"(p)$ separa ciò che manca per struttura del grafo (frontiere strette) da ciò che si perde per sincronizzazione e banda. #todo[grafico di $S_"max"(p)$ sovrapposto agli speedup misurati con `run_timing.sbatch`.]
+
+=== Variante a wavefront esplicito, senza grafo
+
+Con pesi $w_i >= 1$ il livello di un tile è $b + q$ (@tab:dag-frontiers), e la visita per anti-diagonali è comunque valida per *qualsiasi* insieme di pesi: la riga $i$ del tile $(b, q)$ legge la riga $i-1$ nelle colonne $w$ e $w - w_i <= w$, cioè nel tile $(b, q')$ o, per la prima riga del blocco, $(b-1, q')$ con $q' <= q$, e tutti questi stanno su anti-diagonali precedenti o sul tile stesso. Quando invece $"maxWeight" > "cap"_b$ alcuni tile non dipendono dal vicino di sinistra e il DAG può assegnare livelli più bassi di $b + q$, cioè frontiere più larghe: è il caso in cui il grafo esplicito può esporre più parallelismo del wavefront, e lo sweep su maxWeight e $"cap"_b$ di `run_timing.sbatch` serve a misurarlo. La variante `knapsackdptiled` usa questa visita direttamente sulla tabella row-major della versione classica: stessi tile e stesso parallelismo del DAG, ma senza costruzione del grafo, senza un'allocazione per tile e senza copia della riga di confine. Serve a un confronto per esclusione (*ablation*):
+
+- classica row-major contro `knapsackdptiled` a un thread misura il solo effetto della visita a tile sulla località;
+- `knapsackdptiled` contro `knapsackdpdag` allo stesso numero di thread misura il costo del grafo e dei blocchi separati.
+
+#todo[tabella dell'ablation dalle misure di `run_timing.sbatch`.]
+
+=== Lo scheduler topologico alternativo
+
+Oltre al solver a livelli, `solve_dag_topo` (attivato da `KNAPSACK_DAG_TOPO=1`) esegue i tile appena il loro grado d'ingresso scende a zero, con una coda condivisa. Nella prima versione la coda pubblicava gli slot con un unico contatore `filled = slot + 1`: con due produttori concorrenti il secondo poteva rendere visibile lo slot del primo prima che fosse scritto, e un consumatore leggeva un valore non inizializzato (un tile calcolato due volte e uno mai, con stallo o risultato errato). Ora ogni slot è pubblicato da solo. Le misure di questo capitolo non usano lo scheduler topologico.
+
 === L'effetto del tiling sulla località
 
 #figure(
   image("../images/perf_vs_algorithms.png", width: 100%),
   caption: [Confronto KnapsackDP classico e KnapsackDPDAG a capacity $10^6$: IPC, cicli per cella e LLC MPKI.],
 ) <fig:dag-vs-classic>
+
+#nota(titolo: "Confronto da rifare")[Questa sezione e la successiva confrontano il DAG con la DP classica *column-major* (@sec:kpdp-layout): la differenza di IPC, di miss e di traffico DRAM misura soprattutto il layout della tabella classica, non il tiling. Con la tabella row-major la classica è più veloce del DAG già in seriale sulla macchina della verifica preliminare. Le conclusioni vanno riscritte sull'ablation classica / `knapsackdptiled` / `knapsackdpdag`.]
 
 Il guadagno principale del tiling è sulla gerarchia di memoria. In seriale a capacity $10^6$ la versione DAG raggiunge un IPC di $2.2 - 2.3$ contro $approx 0.64$ del classico, con $approx 4$ miss LLC per 1000 istruzioni contro $approx 97$: le miss totali crollano da $121 times 10^6$ a $5 times 10^6$ ($24 times$ in meno) a parità di istruzioni eseguite ($approx 1.2 times 10^9$ per entrambe). Il costo per cella scende da $approx 38 - 40$ a $approx 11$ cicli: il tile mantiene il proprio working set in cache e la riga di confine del tile superiore resta residente.
 

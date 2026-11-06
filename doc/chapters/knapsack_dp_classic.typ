@@ -2,21 +2,21 @@
 #import "kp_dp_algo.typ": *
 
 #show: style-algorithm
-= Knapsack DP Classic frontier
+= DP classica: parallelismo sulla riga
 
 La risoluzione classica dell'algoritmo dello zaino in versione dynamic programming è sostanzialmente l'applicazione del seguente algoritmo
 
 #KpDp <algo-kpdp>
 
-Questo algoritmo ha una complessità di $O(N * C)$ dove C è la capacità dello zaino, la frontiera di esecuzione lungo cui è possibile parallelizzare è sostanzialmente la linea corrente di calcolo. Visto che i calcoli effettuati sulla frontiera corrente dipendono solo da quella precedente, e che ogni esecutore accede ad una cella diversa, l'algoritmo può essere considerato parte del modello EREW PRAM (Exclusive Read, Exclusive Write).
+Questo algoritmo ha una complessità di $O(n dot C)$, dove $C$ è la capacità dello zaino: è *pseudo-polinomiale*, polinomiale nel valore di $C$ ma esponenziale nella sua dimensione in bit ($log_2 C$), ed è il motivo per cui il problema resta NP-difficile pur ammettendo questa soluzione esatta. La frontiera di esecuzione lungo cui è possibile parallelizzare è la riga corrente: le celle della riga $i$ dipendono solo dalla riga $i-1$ e ogni esecutore scrive celle diverse. Le letture invece *non* sono esclusive: la cella $"DP"[i-1][x]$ è letta sia dalla cella $w = x$ (caso "non prendo") sia dalla cella $w = x + w_i$ (caso "prendo"), che in generale appartengono a esecutori diversi. Il modello di riferimento è quindi la CREW PRAM (Concurrent Read, Exclusive Write): con $C+1$ processori l'algoritmo esegue $n$ passi paralleli, cioè lavoro $O(n C)$ e profondità $O(n)$.
 
 
-== Knapsack DP Classic frontier: implementazione
+== Implementazione
 
 L'implementazione più semplice di questo algoritmo è la seguente.
 
 #figure(
-  caption: "Knapsack DP Classic frontier: implementazione semplice",
+  caption: "DP classica: implementazione semplice",
   kind: "listing",
   sourcecode[
     ```cpp
@@ -37,48 +37,52 @@ L'implementazione più semplice di questo algoritmo è la seguente.
   ],
 )
 
-In questa implementazione ci sono due problemi, il primo è che l'allocazione della DP avviene come vettore contenente vettori, ogni accesso alla DP comporta l'accesso a un puntatore e questo pregiudica la località dei dati durante l'esecuzione; il secondo è che OpenMP a ogni iterazione aprirà e chiuderà i thread, con conseguente overhead. Per mitigare questo problema è necessario eliminare la chiusura e apertura dei threads e usare una struttura dati per la DP che permetta di aumentare la località dei dati, una Eigen matrix dalla libreria Eigen3 offre proprio questa funzionalità, allocando una matrice come vettore unico e offrendo operatori di accesso riga-colonna che ne semplificano la gestione.
+In questa implementazione il problema reale è uno solo: OpenMP apre e chiude il team di thread a ogni riga, con un overhead che si paga $n$ volte. L'allocazione come vettore di vettori, invece, *non* pregiudica la località: ogni riga è un blocco contiguo e il ciclo interno scorre proprio lungo la riga, per cui l'indirezione costa un accesso al puntatore per riga, non per cella.
+
+Una matrice Eigen alloca l'intera tabella in un blocco unico e ne semplifica l'indicizzazione, ma va dichiarata con l'ordine giusto. L'ordine predefinito di Eigen è *per colonne* (column-major): con il ciclo interno su $w$, due celle consecutive $"DP"(i, w)$ e $"DP"(i, w+1)$ distano $(n+1) dot 4$ byte, cioè 204 B a $n = 50$ e 20 KB a $n = 5000$. Ogni cella tocca allora una linea di cache diversa e, per $n$ grande, una pagina diversa. La prima versione della matrice usava proprio l'ordine predefinito; la versione corretta la dichiara row-major, così che ogni riga torni a essere un flusso contiguo:
+
 #figure(
-  caption: "Knapsack DP Classic frontier: Implementazione migliorata",
+  caption: "DP classica: implementazione corretta (estratto di `knapsackdp.cpp`)",
   kind: "listing",
   sourcecode[
     ```cpp
-    int n = weights.size();
-    	Eigen::MatrixX<int> dp{};
-    	dp.resize(n + 1, capacity + 1);
-    	dp.setZero();
+    using DpTable = Eigen::Matrix<int, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+    DpTable dp;
+    dp.resize(n + 1, capacity + 1);   // nessun setZero() seriale
     #pragma omp parallel
-    	for (int i = 1; i <= n; ++i)
-    	{
-    		int tid = omp_get_thread_num();
-    		int nt = omp_get_num_threads();
-    		int begin = std::ceil(tid * capacity / nt);
-    		int end = std::min<int>(capacity, std::ceil((tid + 1) * capacity / nt));
-    		for (int w = begin; w <= end; ++w)
-    		{
-    			if (weights[i - 1] <= w)
-    			{
-    				dp(i, w) = std::max(dp(i - 1, w), dp(i - 1, w - weights[i - 1]) + values[i - 1]);
-    			}
-    			else
-    			{
-    				dp(i, w) = dp(i - 1, w);
-    			}
-    		}
-    #pragma omp barrier
-    	}
+    {
+        // fetta semiaperta [begin, end) della riga, in 64 bit
+        const auto [begin, end] = kp::static_block(capacity + 1, omp_get_thread_num(),
+                                                   omp_get_num_threads());
+        for (int i = 1; i <= n; ++i) {
+            kp::dp_row_segment(dp.row(i - 1).data(), dp.row(i).data(),
+                               begin, end, weights[i - 1], values[i - 1]);
+            #pragma omp barrier
+        }
+    }
     ```
   ],
-)
+) <lst:kpdp-row-major>
 
-La threadpool di OpenMP viene aperta nel ciclo for più esterno, in questo modo quando si procede a calcolare le righe della DP non avviene l'apertura e chiusura dei threads, invece si indica loro solo di attendere alla fine di ogni riga mediante una barriera.
+Il team di OpenMP viene aperto fuori dal ciclo sulle righe: i thread non vengono creati e distrutti a ogni riga, ma si attendono a vicenda con una barriera alla fine di ognuna, necessaria perché la riga $i+1$ legge la riga $i$ in colonne arbitrarie ($w - w_(i+1)$). Tre dettagli della versione corretta contano per le misure:
 
-== Knapsack DP Classic Frontier: Risultati
+- *fette disgiunte*: ogni thread riceve l'intervallo semiaperto $[b_t, e_t)$ calcolato da `kp::static_block` in aritmetica a 64 bit. La prima versione usava estremi inclusi su entrambi i lati, per cui la colonna di confine fra due thread veniva calcolata due volte (una data race, benigna nel valore ma formalmente comportamento indefinito), e il prodotto `tid * capacity` in `int` andava in overflow oltre $approx 6.7 dot 10^7$ con 32 thread;
+- *first touch parallelo*: la tabella non viene azzerata in seriale ma toccata la prima volta da ciascun thread nella propria fetta, con la stessa partizione del calcolo. Ogni pagina finisce così sul nodo NUMA del thread che la userà, e il costo dei page fault è misurato come fase a sé (`first_touch`) invece di gonfiare il tempo del kernel;
+- *kernel comune*: il ciclo interno (`kp::dp_row_segment`) è spezzato in $w = w_i$, così la parte calda non ha salti dipendenti dai dati e il compilatore la vettorizza. Lo stesso kernel è usato dalle varianti a tile e dal DAG, per cui una differenza di tempo fra le varianti può venire solo dall'ordine di visita, dal layout o dalla sincronizzazione.
+
+=== Variante con due righe e tabella delle decisioni
+
+La tabella completa serve solo alla ricostruzione della soluzione. La variante `knapsackdpbits` tiene due sole righe di valori, scambiate a ogni oggetto, e registra per ogni cella un bit "l'oggetto $i$ è stato preso alla capacità $w$" (vero se e solo se $"DP"[i][w] > "DP"[i-1][w]$, la stessa regola della ricostruzione classica, per cui le due versioni restituiscono lo stesso insieme). La memoria scende da 4 byte a 1/8 di byte per cella, cioè 32 volte, e la tabella da 20 GB a $n = 5000$, $C = 10^6$ diventa di 625 MB. Ogni thread possiede parole intere da 64 bit della tabella dei bit, così due thread non scrivono mai la stessa parola. È il riferimento classico più forte con cui una versione a tile deve confrontarsi.
+
+== Risultati
+
+#nota(titolo: "Misure da rifare")[Tutti i tempi, i contatori e i valori di $K_c$ di questa sezione sono stati raccolti con la prima versione della matrice, *column-major*. Descrivono quindi il costo di una visita a passo $(n+1) dot 4$ byte, non quello dell'algoritmo: la tabella row-major legge e scrive ogni riga come un flusso contiguo. L'interpretazione "memory-bound per costruzione" va riletta in questa luce (@sec:kpdp-layout), e le misure vanno rifatte con `sbatch/run_timing.sbatch` e con i `run_*_perf.sbatch` aggiornati (@sec:metodologia).]
+
 
 Per confrontare i risultati bisogna tenere conto di 3 parametri del problema che ne modificano profondamente il calcolo. Il primo è la capacità massima dello zaino, che cambia la dimensione della riga; il secondo è il range (e il seed di generazione) dei pesi, un peso grande richiede al processore di eseguire un salto più o meno grande nella riga precedente; l'ultimo è il numero di oggetti, che rende sostanzialmente la DP più o meno lunga, in questo caso comporta essenzialmente un incremento lineare del tempo, ma se si confrontano i tempi con la versione DAG che invece accorpa anche le linee è un parametro che è utile considerare. La granularità del problema in questo caso è dipendente dalla capacità totale, ad ogni thread viene assegnata una porzione della riga divisa in parti uguali tra threads.
 
 === Esecuzione dell'esperimento
-L'algoritmo è stato fatto girare su una CPU Neoverse-N1, basata su architettura ARM, con 80 cores: ciascun core ha 64 KB di cache di primo livello dati (5 MB aggregati) e 80 MB di cache di secondo livello unificata. Il programma è stato compilato con GCC 14.2.0 e il preset Release di CMake, che usa i flag di ottimizzazione predefiniti (-O3).
+L'algoritmo è stato fatto girare su un nodo della partizione epito del cluster mercurio, con CPU Arm Neoverse-N1 a 80 core. Nel Neoverse-N1 la cache dati di primo livello è da 64 KB e la cache di secondo livello è *privata* di ciascun core (non unificata); il livello condiviso dipende dal SoC. #todo[dimensioni di L2 e dell'ultimo livello, e topologia NUMA, dal file `machine.txt` della campagna `run_timing.sbatch`.] Il programma risulta compilato con GCC 14.2.0 nel preset Release di CMake (`-O3 -DNDEBUG`). #todo[verificare: gli script di allora indicavano il preset `default`, che è Debug; ogni risultato nuovo riporta tipo di build, compilatore, flag e commit nel campo `build`.]
 
 #figure(
   image("../images/kpdp_speedup_vs_processors.png", width: 100%),
@@ -123,76 +127,14 @@ I fattori si legano i questo modo: $p$ è il guadagno ideale dagli esecutori; $S
 
 
 
-=== Script di esecuzione
+=== Lettura delle misure alla luce del layout <sec:kpdp-layout>
 
-La campagna di misure è stata eseguita sul cluster mercurio sulla partizione epito mediante il seguente script Slurm, che per ogni combinazione di parametri ripete la misura per un numero fissato di repliche: in ogni replica `perf stat` raccoglie i contatori hardware in formato CSV mentre il tempo del solver viene letto dallo stdout di `kpbench` della stessa esecuzione, così che contatori e tempi appartengano sempre allo stesso run; le righe vengono poi appese a un unico CSV di riepilogo con i metadati del run (la colonna `time_s` è vuota solo se la riga del tempo non è stata riconosciuta). Lo script verifica preventivamente che `perf` possa usare gli eventi richiesti e abortisce in caso contrario.
+Tre segnali delle misure precedenti sono la firma di una visita a passo lungo più che di un limite dell'algoritmo:
 
-#figure(
-  caption: "sbatch della campagna di misure sul DP classico",
-  kind: "listing",
-  sourcecode[
-    ```bash
-    #!/bin/bash
-    #SBATCH --job-name=kpdp_perf
-    #SBATCH --ntasks=1
-    #SBATCH --cpus-per-task=32
-    #SBATCH --time=00:30:00
-    #SBATCH --output=perf_kpdp.out
-    #SBATCH --error=perf_kpdp.err
-    #SBATCH --mem=32G
-    set -euo pipefail
-    SEED=42
-    NUM_ITEMS=50
-    BIN="./build/kpbench"
-    REPEATS=3
-    TEST="knapsackdp"
-    OUT_DIR="perf_kpdp_out"
-    SUMMARY="$OUT_DIR/perf_summary.csv"
-    SUMMARY_HEADER="max_weight,capacity,threads,tag,
-    value,unit,event,runtime_ns,runtime_pct,metric_value,metric_unit,repeat,time_s"
+- *il costo per cella cresce con $n$*: da 12,6 a 30 ns per cella passando da $n = 50$ a $n = 5000$. Con la tabella row-major il ciclo interno legge e scrive righe contigue e non dipende da $n$; con quella column-major il passo fra celle consecutive è proporzionale a $n+1$, e da $n approx 1000$ in su ogni cella cade in una pagina diversa (TLB);
+- *$approx 38$ cicli per cella e hit sull'ultimo livello di cache allo 0--3%*: con un passo di 204 byte ogni accesso porta in cache una linea da 64 byte di cui si usa un solo intero;
+- *lo speedup del DAG in seriale* ($4 - 9.4 times$, @tab:dag-crossover): il DAG memorizza ogni tile row-major, quindi il confronto misura il layout prima del tiling.
 
-    PERF_EVENTS="cycles,instructions,cache-references,cache-misses,
-    branch-misses,L1-dcache-loads,L1-dcache-load-misses,ll_cache_rd,
-    ll_cache_miss_rd,dTLB-load-misses,iTLB-load-misses"
+#nota(titolo: "Verifica preliminare")[Su una macchina di sviluppo x86-64 (una VM con 4 vCPU, non il nodo del cluster), a $n = 50$, $C = 10^6$, maxWeight = 10, mediana di 3 esecuzioni e tempo totale del solver: la versione column-major impiega 0,589 s in seriale e quella row-major 0,045 s ($approx 13 times$); il DAG con $("item"_b, "cap"_b) = (10, 10^4)$ ne impiega 0,099 s. Con la tabella row-major la classica è *più veloce* del DAG già in seriale. Il numero vale solo per quella macchina e serve a mostrare l'ordine di grandezza dell'effetto: le conclusioni del confronto vanno tratte dalle nuove misure sul nodo del cluster.]
 
-    for max_weight in 10 1000; do
-      for threads in 1 8 32; do
-        for cap in 1000000 10000000; do
-          tag="maxw${max_weight}_cap${cap}_t${threads}"
-          export OMP_NUM_THREADS="$threads"
-
-          for rep in $(seq 1 "$REPEATS"); do
-            RUN_OUT=$(perf stat -x , -e "$PERF_EVENTS" \
-              -o "$OUT_DIR/perf_${tag}_r${rep}.csv" \
-              "$BIN" \
-                --test "$TEST" \
-                --capacity "$cap" \
-                --numItems "$NUM_ITEMS" \
-                --seed "$SEED" \
-                --numThreads "$threads" \
-                --maxWeight "$max_weight" \
-                --save "")
-
-            time_s=$(printf '%s\n' "$RUN_OUT" | sed -n "s/^${TEST}: \([0-9.]*\)s .*/\1/p")
-            [ -s "$SUMMARY" ] || echo "$SUMMARY_HEADER" > "$SUMMARY"
-            awk -F, -v OFS=, -v mw="$max_weight" -v c="$cap" -v p="$threads" -v tag="$tag" \
-              -v rep="$rep" -v t="$time_s" \
-              '!/^#/ && NF >= 5 {
-                 mv = (NF >= 6) ? $6 : ""
-                 mu = (NF >= 7) ? $7 : ""
-                 print mw, c, p, tag, $1, $2, $3, $4, $5, mv, mu, rep, t
-               }' \
-              "$OUT_DIR/perf_${tag}_r${rep}.csv" >> "$SUMMARY"
-          done
-
-          echo ""
-        done
-      done
-    done
-
-    ```
-  ],
-) <lst:kpdp-perf-sbatch>
-
-
-
+Lo script della campagna di contatori è riportato in appendice (@lst:kpdp-perf-sbatch).

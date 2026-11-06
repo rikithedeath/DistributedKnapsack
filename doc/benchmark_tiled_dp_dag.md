@@ -1,5 +1,16 @@
 # Benchmark del Solver Tiled DP-over-DAG (Knapsack 0/1)
 
+> ⚠️ **Avvertenza sulle misure della DP classica.** Dal commit "complete
+> knapsackdp granularization" (15/09/2026) fino alla revisione "Benchmark
+> fairness: row-major classic DP" la DP classica usava una
+> `Eigen::MatrixX<int>`, che Eigen memorizza **per colonne**: con il ciclo
+> interno sulla capacità due celle consecutive distavano `(n+1)·4` byte.
+> I tempi e i contatori della classica raccolti in quel periodo misurano quel
+> layout, non l'algoritmo, e i confronti DAG/classica che li usano vanno
+> rifatti (`sbatch/run_timing.sbatch`). Le misure precedenti al 15/09 usavano
+> `vector<vector<int>>`, con righe contigue, e non ne sono toccate: controllare
+> la data di ogni campagna. Il report aggiornato è `doc/main.typ`.
+
 Questo documento è un **report sperimentale** complementare a
 [`doc/tiled_dp_dag.md`](tiled_dp_dag.md), che descrive l'algoritmo in dettaglio.
 Qui misuriamo e confrontiamo le prestazioni dei tre solver che risolvono lo
@@ -42,9 +53,9 @@ for (int i = 1; i <= n; ++i) {
 ```
 
 È il **riferimento di baseline**: una riga alla volta, con un solo passo di
-dipendenza `dp[i-1][·]` letto a monte. La ricorrenza legge al massimo una
-colonna a sinistra, quindi il layout row-major è essenzialmente **cache-ottimo**
-per questo tipo di ricorrenza.
+dipendenza `dp[i-1][·]` letto a monte. La ricorrenza legge la riga
+precedente nelle colonne `w` e `w - w_i`, quindi con la tabella
+**memorizzata per righe** la visita è sequenziale e amica del prefetcher.
 
 ### 1.2. `knapsackdpdag` / `solve_dag` (levelized)
 
@@ -285,9 +296,11 @@ cross-tile): ogni tile paga
 1. la **copia della riga boundary** (una lettura indiretta nel tile sopra);
 2. **l'indirezione cross-tile** per ogni read che esce dal tile corrente.
 
-Il DP classico row-wise, invece, legge unicamente una colonna a sinistra nello
-stesso array contiguo row-major: per questa ricorrenza è **essenzialmente
-cache-ottimo**. La partizione in tile — pensata per il futuro parallelismo MPI —
+Il DP classico riga per riga, invece, legge la riga precedente nelle colonne
+`w` e `w - w_i`: se la tabella è memorizzata per righe (come nella versione
+con `vector<vector<int>>` e in quella corretta) la visita è sequenziale e
+amica del prefetcher; con la `Eigen::MatrixX<int>` column-major usata fra il
+15/09 e la revisione non lo era (vedi l'avvertenza in testa). La partizione in tile — pensata per il futuro parallelismo MPI —
 aggiunge overhead senza recuperarlo localmente.
 
 Si aggiunge che la sola **`GraphBuild` costa già 295–688 ms** in queste

@@ -1,5 +1,16 @@
 # Analisi dei contatori hardware: comportamento della cache in KnapsackDP e KnapsackDPDAG
 
+> ⚠️ **Avvertenza sulle misure della DP classica.** Dal commit "complete
+> knapsackdp granularization" (15/09/2026) fino alla revisione "Benchmark
+> fairness: row-major classic DP" la DP classica usava una
+> `Eigen::MatrixX<int>`, che Eigen memorizza **per colonne**: con il ciclo
+> interno sulla capacità due celle consecutive distavano `(n+1)·4` byte.
+> I tempi e i contatori della classica raccolti in quel periodo misurano quel
+> layout, non l'algoritmo, e i confronti DAG/classica che li usano vanno
+> rifatti (`sbatch/run_timing.sbatch`). Le misure precedenti al 15/09 usavano
+> `vector<vector<int>>`, con righe contigue, e non ne sono toccate: controllare
+> la data di ogni campagna. Il report aggiornato è `doc/main.typ`.
+
 Questo documento riassume i risultati delle misure `perf stat` raccolte nei
 file `doc/data/perf/perf_kpdp.csv`, `doc/data/perf/perf_kpdpdag.csv` e
 `doc/data/perf/perf_kpdpbig.csv` e visualizzate nei grafici
@@ -84,12 +95,13 @@ Tabella chiave (mediane della campagna perf, `perf_kpdp.csv`):
 
 L'hit ratio su `ll_cache` è **0–3%** in tutte le configurazioni
 (`llc_hit_pct`): la tabella DP (40 MB a c=1e6, 400 MB a c=1e7) supera di
-molto l'ultimo livello di cache e il layout row-major "riga per riga" usa
-ogni cache line una volta sola prima di espellerla. Il risultato è
+molto l'ultimo livello di cache e il layout **column-major** della tabella
+(vedi l'avvertenza in testa) fa sì che ogni cache line, che contiene celle
+di righe diverse, venga usata per un solo intero prima di essere espulsa. Il risultato è
 **~90–100 LLC miss per 1000 istruzioni**: il sollevamento (lift) della
 ricorrenza non ha località temporale sfruttabile. L'hit ratio L1 resta
 alto (83–90%) perché ogni cella viene scritta e riletta a breve distanza
-(dipendenza `dp[i-1][w-1]`), ma il traffico verso la memoria è dominante:
+(la cella `dp[i-1][w]`, stessa colonna), ma il traffico verso la memoria è dominante:
 con IPC ≈ 0.6 il core passa la maggior parte del tempo ad aspettare.
 
 ### 2.2. Il degrado per-cella è legato ai thread, non alla capacità

@@ -20,8 +20,10 @@ stanno prendendo piede diverse soluzioni basate su euristiche.
 
 == Soluzioni per knapsack 0/1
 
-Il problema è NP-completo, data una soluzione non esiste quindi un algoritmo che possa verificare se è ottima in tempo polinomiale.
-Esiste tuttavia una soluzione che lo risolve in tempo pseudo-polinomiale basata sulla programmazione dinamica.
+La versione decisionale del problema ("esiste un sottoinsieme di peso $<= W$ e profitto $>= P$?") è NP-completa: non si conosce un algoritmo
+polinomiale nella dimensione dell'input, e non ne esiste uno a meno che P = NP. Il problema è però NP-difficile solo in senso *debole*:
+la programmazione dinamica lo risolve in tempo $O(n W)$, polinomiale nel valore di $W$ ma esponenziale nella sua dimensione in bit
+(tempo *pseudo-polinomiale*).
 La prima soluzione più semplice e meno ottimale ha complessità temporale $O(2^n)$ ed è basata su un albero decisionale esplorato ricorsivamente
 
 #algorithm-figure(
@@ -125,10 +127,11 @@ Lo svantaggio principale delle soluzioni basate su programmazione dinamica è ch
 
 == Soluzione Greedy
 
-La soluzione Greedy ha un indubbio vantaggio rispetto a tutte le altre, può scegliere anche frazioni di un oggetto,
-l'idea è quella di prendere gli oggetti basandosi sul loro rapporto peso/valore, prendendoli in ordine decrescente di rapporto,
-finchè lo zaino non è pieno. Se un oggetto non è possibile prenderlo per intero allora si può prendere una sua frazione a seconda
-della capacità rimanente.
+La soluzione greedy risolve in modo ottimo un problema diverso, lo zaino *frazionario*, in cui di ogni oggetto si può prendere
+anche una frazione: si prendono gli oggetti in ordine decrescente di rapporto valore/peso finché lo zaino non è pieno, e dell'ultimo
+oggetto che non entra per intero si prende la frazione che riempie la capacità rimanente. Per lo zaino 0/1 il suo valore è un limite
+superiore all'ottimo (il rilassamento continuo), utile nei metodi branch and bound, mentre la sua versione senza frazioni è solo
+un'euristica.
 
 #algorithm-figure(
   "Fractional Knapsack (Greedy)",
@@ -157,4 +160,9 @@ della capacità rimanente.
 
 ) <alg:fknapsack>
 
+== Lavori correlati e contributo
+
+La soluzione per programmazione dinamica e le sue varianti sono trattate per esteso da Martello e Toth @martelloToth. Sul piano parallelo, Maleki, Musuvathi e Mytkowicz @rankConvergenceDynamicProgramming parallelizzano le DP lungo la dimensione degli stadi sfruttando la convergenza del rango dei prodotti nel semianello tropicale; Boyer, El Baz ed Elkihel @knapsackScienceDirect portano la DP dello zaino su GPU; Li et al. @knapsackCopaSolution propongono un algoritmo cost-optimal basato sulla tecnica a due liste. La suddivisione in tile di nidi di cicli con dipendenze uniformi e la loro esecuzione per fronti d'onda sono tecniche classiche della compilazione per località e parallelismo, automatizzate per esempio dal modello poliedrale di Pluto @bondhugulaPluto; qui la dipendenza "prendo" ha distanza variabile ($w_i$), e il grafo dei tile la rende esplicita.
+
+Il contributo di questo lavoro è il confronto, sulla stessa macchina e con lo stesso kernel interno, di quattro organizzazioni della stessa DP: la classica parallela sulla riga, la classica con due righe e una tabella di bit, la versione a tile eseguita per anti-diagonali e quella a tile con un grafo delle dipendenze esplicito, con un limite teorico allo speedup di quest'ultima e un'analisi per esclusione che separa località, parallelismo e costo del grafo.
 

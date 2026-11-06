@@ -71,3 +71,16 @@
   }
   body
 }
+
+// Riquadro per avvertenze e note di metodo (es. misure da rifare).
+#let nota(titolo: "Nota", body) = block(
+  fill: luma(242),
+  stroke: (left: 2pt + luma(120)),
+  inset: (x: 10pt, y: 8pt),
+  width: 100%,
+  breakable: true,
+)[*#titolo.* #body]
+
+// Segnaposto visibile per i valori che vanno presi dalle nuove misure: compare
+// in rosso nel PDF, così nessun numero mancante passa inosservato.
+#let todo(body) = text(fill: rgb("#b00020"))[[DA COMPLETARE: #body]]

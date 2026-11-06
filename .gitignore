@@ -6,4 +6,6 @@ CMakeCustomPreset.json
 *.csv
 *.png
 result*.json
-
+# Report data and figures are versioned, so that doc/main.typ compiles from a clean clone.
+!doc/data/**
+!doc/images/*.png

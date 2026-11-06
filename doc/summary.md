@@ -1,5 +1,14 @@
 # Performance-Counter Analysis — Measures and Graphs Explained
 
+> ⚠️ **Warning about the classic-DP measurements.** From the commit "complete
+> knapsackdp granularization" (2026-09-15) until the "Benchmark fairness:
+> row-major classic DP" revision, the classic DP used an `Eigen::MatrixX<int>`,
+> which Eigen stores **column-major**: with the inner loop over the capacity,
+> consecutive cells were `(n+1)*4` bytes apart. The classic-DP timings and
+> counters analysed here measure that layout, not the algorithm, and every
+> DAG-vs-classic comparison built on them has to be redone
+> (`sbatch/run_timing.sbatch`). The updated report is `doc/main.typ`.
+
 This document explains, measure by measure and graph by graph, the analysis
 produced by `doc/kpdp_perf_analysis.py`. That script turns raw `perf stat`
 hardware counters (in `doc/data/perf/perf_summary.csv` and

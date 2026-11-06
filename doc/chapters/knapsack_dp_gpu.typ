@@ -146,6 +146,8 @@ A capacity $10^5$ e $10^6$ il tempo del kernel resta piatto a $approx 3 - 5" ms"
 
 === Confronto con la versione CPU
 
+#nota(titolo: "Confronto da rifare")[La versione CPU di riferimento qui è la DP classica *column-major* (@sec:kpdp-layout), che sulla macchina della verifica preliminare è circa 13 volte più lenta di quella row-major: i rapporti GPU/CPU che seguono sovrastimano il vantaggio della GPU e vanno ricalcolati sulle nuove misure CPU.]
+
 
 
 Il confronto con la versione CPU classica (stesse istanze, stesso seed) va letto su due piani. Sul tempo di esecuzione la GPU vince nettamente solo a capacity $10^7$: $22 - 23 times$ contro il seriale e $approx 3.2 times$ contro 32 thread. A capacity $10^6$ invece il tempo di esecuzione della GPU ($approx 0.30" s"$, fisso) è *peggiore* del CPU a 32 thread ($approx 0.09" s"$) e appena migliore del seriale ($approx 0.65" s"$): l'overhead di setup (~0.3 s) non è ammortizzato da un kernel che dura pochi millisecondi.
